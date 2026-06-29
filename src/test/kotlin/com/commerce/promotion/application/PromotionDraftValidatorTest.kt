@@ -5,6 +5,7 @@ import com.commerce.promotion.domain.PromotionDraft
 import com.commerce.promotion.infrastructure.ai.AiPromotionProperties
 import io.kotest.matchers.booleans.shouldBeFalse
 import io.kotest.matchers.booleans.shouldBeTrue
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldHaveAtLeastSize
 import org.junit.jupiter.api.Test
@@ -40,7 +41,7 @@ class PromotionDraftValidatorTest {
     fun `정상 초안은 통과한다`() {
         val report = validator.validate(validDraft())
         report.valid.shouldBeTrue()
-        report.reasons shouldHaveAtLeastSize 0
+        report.reasons.shouldBeEmpty()
     }
 
     @Test
@@ -54,6 +55,7 @@ class PromotionDraftValidatorTest {
     fun `ALL 타깃은 항상 허용된다`() {
         val report = validator.validate(validDraft().copy(target = "ALL"))
         report.valid.shouldBeTrue()
+        report.reasons.shouldBeEmpty()
     }
 
     @Test
@@ -80,10 +82,38 @@ class PromotionDraftValidatorTest {
     }
 
     @Test
-    fun `0 또는 음수 할인은 거부된다`() {
+    fun `0 할인은 거부된다`() {
         val report = validator.validate(validDraft().copy(discountValue = BigDecimal.ZERO))
         report.valid.shouldBeFalse()
         report.reasons shouldContain "할인값은 0보다 커야 합니다: 0"
+    }
+
+    @Test
+    fun `음수 할인은 거부된다`() {
+        val report = validator.validate(validDraft().copy(discountValue = BigDecimal("-5")))
+        report.valid.shouldBeFalse()
+        report.reasons shouldContain "할인값은 0보다 커야 합니다: -5"
+    }
+
+    @Test
+    fun `예산 상한이 0이면 거부된다`() {
+        val report = validator.validate(validDraft().copy(budgetCap = BigDecimal.ZERO))
+        report.valid.shouldBeFalse()
+        report.reasons shouldContain "예산은 0보다 커야 합니다: 0"
+    }
+
+    @Test
+    fun `예산 상한이 음수이면 거부된다`() {
+        val report = validator.validate(validDraft().copy(budgetCap = BigDecimal("-1000")))
+        report.valid.shouldBeFalse()
+        report.reasons shouldContain "예산은 0보다 커야 합니다: -1000"
+    }
+
+    @Test
+    fun `최소 결제액이 음수이면 거부된다`() {
+        val report = validator.validate(validDraft().copy(minSpend = BigDecimal("-1")))
+        report.valid.shouldBeFalse()
+        report.reasons shouldContain "최소 결제액은 음수일 수 없습니다: -1"
     }
 
     @Test
