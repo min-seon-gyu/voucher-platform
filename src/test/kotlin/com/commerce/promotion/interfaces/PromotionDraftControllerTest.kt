@@ -11,6 +11,7 @@ import com.commerce.promotion.domain.PromotionDraft
 import com.commerce.promotion.domain.ValidationReport
 import com.commerce.promotion.interfaces.dto.CreatePromotionDraftRequest
 import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.booleans.shouldBeFalse
 import io.kotest.matchers.booleans.shouldBeTrue
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -60,6 +61,22 @@ class PromotionDraftControllerTest {
             controller.createDraft(CreatePromotionDraftRequest("성남시 10% 할인", null))
         }
         ex.errorCode shouldBe ErrorCode.UNAUTHORIZED
+    }
+
+    @Test
+    fun `가드레일 거부 결과는 valid=false 와 사유를 담아 200 으로 반환한다`() {
+        authenticateAs(42L)
+        val rejectedResult = PromotionDraftResult(
+            draft,
+            ValidationReport(false, listOf("허용되지 않은 지역입니다")),
+        )
+        every { service.draft(any(), 42L) } returns rejectedResult
+
+        val response = controller.createDraft(CreatePromotionDraftRequest("미허용 지역 프로모션", null))
+
+        response.validation.valid.shouldBeFalse()
+        (response.validation.reasons.isNotEmpty()).shouldBeTrue()
+        response.draft shouldBe draft
     }
 
     @Test

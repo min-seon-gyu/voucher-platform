@@ -5,6 +5,7 @@ import com.commerce.promotion.domain.PromotionDraft
 import com.commerce.promotion.domain.ValidationReport
 import com.commerce.promotion.infrastructure.ai.AiPromotionProperties
 import com.commerce.promotion.infrastructure.ai.LlmClient
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.booleans.shouldBeFalse
 import io.kotest.matchers.booleans.shouldBeTrue
 import io.kotest.matchers.shouldBe
@@ -28,7 +29,8 @@ class PromotionDraftServiceTest {
         RegionPolicy(AiPromotionProperties(allowedRegions = setOf("SN"), maxBudget = BigDecimal("100000000"))),
         clock,
     )
-    private val service = PromotionDraftService(llmClient, validator, SimpleMeterRegistry())
+    private val meterRegistry = SimpleMeterRegistry()
+    private val service = PromotionDraftService(llmClient, validator, meterRegistry)
 
     private fun draft(target: String = "SN", budget: BigDecimal = BigDecimal("50000000")) = PromotionDraft(
         name = "성남시 7월 할인",
@@ -61,5 +63,17 @@ class PromotionDraftServiceTest {
 
         result.validation.valid.shouldBeFalse()
         (result.validation.reasons.isNotEmpty()).shouldBeTrue()
+    }
+
+    @Test
+    fun `LLM 클라이언트가 예외를 던지면 예외가 전파되고 메트릭은 기록되지 않는다`() {
+        every { llmClient.generateDraft(any()) } throws RuntimeException("timeout")
+
+        shouldThrow<RuntimeException> {
+            service.draft(LlmDraftCommand("성남시 10% 할인", null), requesterMemberId = 7L)
+        }
+
+        // counter는 increment()가 호출되지 않았으므로 null 이어야 한다
+        meterRegistry.find("ai.promotion.draft.count").counter() shouldBe null
     }
 }
