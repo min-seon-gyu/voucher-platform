@@ -3,7 +3,7 @@
 ## 1. 패키지 구조 (모듈러 모놀리스)
 
 ```
-com.komsco.voucher/
+com/commerce/
 ├── common/                          ← 공통 모듈
 │   ├── domain/
 │   │   ├── BaseEntity.kt              (id, createdAt, updatedAt, version)
@@ -150,21 +150,42 @@ com.komsco.voucher/
 
 | Operation | Strategy | Reason | 방지하는 장애 시나리오 |
 |-----------|----------|--------|----------------------|
-| **상품권 사용 (결제)** | Redisson 분산락 (`voucher:{id}`) + DB 비관적 락 | 동일 상품권 동시 결제 직렬화 필수. Redis 장애 시 DB 락이 2차 방어 | 이중 사용, 잔액 초과 차감 |
-| **상품권 발행** | Redisson 분산락 (`member:purchase:{memberId}`) + Redis 원자적 카운터 (`region:monthly:{regionId}:{yyyyMM}`) | Member 락으로 1인 한도 직렬화. Region 한도는 `INCRBY`로 원자적 검증 (락 불필요) | 한도 초과 발행/구매. 데드락 위험 제거 |
-| **잔액 환불** | Redisson 분산락 (`voucher:{id}`) | 사용과 환불 동시 요청 직렬화 | 사용 중 환불 처리 |
-| **청약철회** | Redisson 분산락 (`voucher:{id}`) | 사용과 철회 동시 요청 직렬화 | 사용 중 철회 처리 |
+| **상품권 사용 (결제)** | Redisson 분산락 (`voucher:{id}`) + DB 비관적 락 + `TransactionTemplate` | 분산락 → 트랜잭션(커밋) → 락 해제 순서 보장. Redis 장애 시 DB 락이 2차 방어 | 이중 사용, 잔액 초과 차감, 락-커밋 순서 역전 |
+| **상품권 발행** | Redisson 분산락 (`member:purchase:{memberId}`) + Redis Lua 스크립트 (`region:monthly:{regionId}:{yyyyMM}`) + `TransactionTemplate` | Member 락으로 1인 한도 직렬화. Region 한도는 Lua 스크립트로 INCRBY + 한도 검증을 원자적 수행 (락 불필요) | 한도 초과 발행/구매. 데드락 위험 제거 |
+| **잔액 환불** | Redisson 분산락 (`voucher:{id}`) + `TransactionTemplate` | 분산락 → 트랜잭션(커밋) → 락 해제 순서 보장 | 사용 중 환불 처리 |
+| **청약철회** | Redisson 분산락 (`voucher:{id}`) + `TransactionTemplate` | 분산락 → 트랜잭션(커밋) → 락 해제 순서 보장 | 사용 중 철회 처리 |
 | **만료 처리 (배치)** | DB 비관적 락 (`SELECT FOR UPDATE`) | 배치와 실시간 결제 경합 방지. 건별 처리이므로 분산락 불필요 | 만료 중 결제 경합 |
 | **가맹점 등록/수정** | JPA Optimistic Lock (`@Version`) | 충돌 빈도 낮음. 동시 수정 시 재시도로 충분 | 동시 상태 변경 |
 | **정산 생성** | DB Unique Constraint (`merchant_id + period`) | 동일 기간 중복 정산 방지 | 중복 정산 |
 | **회원 정보 수정** | JPA Optimistic Lock (`@Version`) | 충돌 빈도 낮음 | 동시 프로필 수정 |
 
-**Region 월 발행한도 검증 — Redis 원자적 카운터 패턴:**
+**Region 월 발행한도 검증 — Redis Lua 스크립트 패턴:**
 
 - 키: `region:monthly:{regionId}:{yyyyMM}` (TTL: 해당 월 말일 + 1일)
-- 발행 시: `INCRBY amount` → 반환값이 한도 초과 시 `DECRBY amount`로 롤백 + 거절
-- 장점: 락 없이 원자적 한도 검증. 분산락 1개(Member)만 사용하므로 데드락 불가
+- 발행 시: Lua 스크립트로 `INCRBY` + 한도 비교 + 초과 시 `DECRBY` 롤백을 **단일 원자적 연산**으로 수행
+  ```lua
+  local current = redis.call('INCRBY', KEYS[1], ARGV[1])
+  if current > tonumber(ARGV[2]) then
+      redis.call('DECRBY', KEYS[1], ARGV[1])
+      return -1
+  end
+  return current
+  ```
+- 장점: Lua 스크립트는 Redis에서 원자적으로 실행되므로 INCRBY~DECRBY 사이에 다른 요청이 끼어들 수 없음. 분산락 1개(Member)만 사용하므로 데드락 불가
 - 초기화: 월초에 해당 Region의 실제 발행액으로 Redis 카운터 동기화 (배치)
+
+**트랜잭션-락 순서 보장 — TransactionTemplate 패턴:**
+
+모든 분산락 사용 서비스에서 `@Transactional` 대신 `TransactionTemplate`을 사용하여 분산락 → 트랜잭션(커밋) → 분산락 해제 순서를 보장한다. `@Transactional`을 사용하면 트랜잭션 시작 → 분산락 획득 → 비즈니스 로직 → 분산락 해제 → 트랜잭션 커밋 순서가 되어, 락 해제~커밋 사이에 다른 스레드가 커밋 전 데이터를 읽는 문제가 발생할 수 있다.
+
+```kotlin
+// 올바른 패턴: 락이 트랜잭션을 감싸므로 커밋 후 락 해제
+fun redeem(...) = lockManager.withVoucherLock(voucherId) {
+    transactionTemplate.execute { _ ->
+        // 비즈니스 로직 (여기서 커밋)
+    }!!
+}  // 여기서 락 해제
+```
 
 ---
 
@@ -229,7 +250,7 @@ com.komsco.voucher/
 
 ## 5. 감사 로그 설계
 
-### 감사 대상 작업 (KOMSCO 컴플라이언스 관점)
+### 감사 대상 작업 (커머스/금융 컴플라이언스 관점)
 
 | 감사 등급 | 대상 작업 |
 |----------|----------|
@@ -323,7 +344,7 @@ CREATE TABLE audit_logs (
 - 새로운 역방향 Transaction + LedgerEntry 쌍을 생성
 - 원 거래와 보상 거래가 `original_transaction_id`로 연결됨
 
-**왜 이것이 KOMSCO에 중요한가:**
+**왜 이것이 커머스 시스템에 중요한가:**
 
 1. **감사 추적성**: 모든 금전 흐름이 삭제 없이 보존. "왜 이 금액이 변경되었는가"를 원장만으로 완벽 추적
 2. **법적 증거력**: 원 거래 기록이 변경 불가(immutable)이므로 분쟁 시 증거로 사용
@@ -363,4 +384,4 @@ CREATE TABLE audit_logs (
 
 ---
 
-**2단계 핵심 결정:** 6개 도메인 모듈(region, member, merchant, voucher, transaction, ledger) + 공통 모듈 + config. 원장은 동기 호출(이벤트 X), 발행 시 Member 락 + Region Redis 카운터(데드락 제거), 이벤트는 감사/알림/정산 큐에만 사용, 운영 메트릭 기반 구축. RegionCounterSyncScheduler로 매시간 Redis 카운터 동기화.
+**2단계 핵심 결정:** 6개 도메인 모듈(region, member, merchant, voucher, transaction, ledger) + 공통 모듈 + config. 원장은 동기 호출(이벤트 X), 발행 시 Member 락 + Region Redis Lua 스크립트(원자적 한도 검증, 데드락 제거), 분산락 사용 서비스는 TransactionTemplate으로 락-커밋 순서 보장, 이벤트는 감사/알림/정산 큐에만 사용, 운영 메트릭 기반 구축. RegionCounterSyncScheduler로 매시간 Redis 카운터 동기화. BigDecimal 비교는 `compareTo`로 통일 (scale 차이에 의한 비교 오류 방지).
