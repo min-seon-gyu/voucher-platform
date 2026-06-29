@@ -18,10 +18,16 @@ class PromotionController(
     private val couponIssueService: CouponIssueService,
 ) {
 
+    /**
+     * 프로모션을 생성한다. 인증된 회원만 호출 가능 (익명 → UNAUTHORIZED 401).
+     * TODO(follow-up): ADMIN 역할 검사 추가 — 현재는 인증 여부만 확인.
+     */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    fun create(@Valid @RequestBody request: CreatePromotionRequest): PromotionResponse =
-        PromotionResponse.from(promotionService.create(request))
+    fun create(@Valid @RequestBody request: CreatePromotionRequest): PromotionResponse {
+        SecurityUtils.currentMemberId() // 미인증이면 UNAUTHORIZED(401) — ADMIN 역할 검사는 follow-up
+        return PromotionResponse.from(promotionService.create(request))
+    }
 
     @GetMapping("/{id}")
     fun getById(@PathVariable id: Long): PromotionResponse =

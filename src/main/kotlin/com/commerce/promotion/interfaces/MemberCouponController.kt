@@ -19,7 +19,7 @@ class MemberCouponController(
     @GetMapping("/{memberId}/coupons")
     fun listCoupons(@PathVariable memberId: Long): List<CouponResponse> {
         if (memberId != SecurityUtils.currentMemberId())
-            throw BusinessException(ErrorCode.INVALID_INPUT, "본인의 쿠폰만 조회할 수 있습니다")
+            throw BusinessException(ErrorCode.ACCESS_DENIED)
         return couponIssueService.findByMember(memberId).map { CouponResponse.from(it) }
     }
 }

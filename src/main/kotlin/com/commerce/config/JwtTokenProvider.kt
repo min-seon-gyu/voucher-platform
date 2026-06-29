@@ -2,22 +2,37 @@ package com.commerce.config
 
 import io.jsonwebtoken.Jwts
 import io.jsonwebtoken.security.Keys
+import jakarta.annotation.PostConstruct
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.core.env.Environment
 import org.springframework.stereotype.Component
 import java.util.*
 import javax.crypto.SecretKey
 
 @Component
 class JwtTokenProvider(
-    @Value("\${jwt.secret:#{null}}") secret: String?,
+    @Value("\${jwt.secret:#{null}}") private val rawSecret: String?,
     @Value("\${jwt.expiration:86400000}") private val expirationMs: Long,
+    private val env: Environment,
 ) {
-    private val key: SecretKey
+    companion object {
+        private val log = LoggerFactory.getLogger(JwtTokenProvider::class.java)
+        const val DEV_SECRET = "local-dev-only-secret-key-minimum-256-bits-long-do-not-use-in-production!!"
+    }
 
-    init {
-        val resolvedSecret = secret
-            ?: "local-dev-only-secret-key-minimum-256-bits-long-do-not-use-in-production!!"
-        key = Keys.hmacShaKeyFor(resolvedSecret.toByteArray())
+    private val key: SecretKey = Keys.hmacShaKeyFor((rawSecret ?: DEV_SECRET).toByteArray())
+
+    @PostConstruct
+    fun validateSecret() {
+        val isProd = env.activeProfiles.contains("prod")
+        val usingDevSecret = rawSecret.isNullOrBlank() || rawSecret == DEV_SECRET
+        if (isProd && usingDevSecret) {
+            throw IllegalStateException("JWT_SECRET must be set when running with the prod profile")
+        }
+        if (!isProd && usingDevSecret) {
+            log.warn("⚠️  dev-only JWT secret in use — DO NOT use in production")
+        }
     }
 
     fun generateToken(memberId: Long, role: String): String {

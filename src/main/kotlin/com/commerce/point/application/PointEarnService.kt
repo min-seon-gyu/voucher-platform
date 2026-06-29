@@ -1,5 +1,7 @@
 package com.commerce.point.application
 
+import com.commerce.common.exception.BusinessException
+import com.commerce.common.exception.ErrorCode
 import com.commerce.ledger.application.LedgerService
 import com.commerce.ledger.domain.AccountCode
 import com.commerce.ledger.domain.LedgerEntryType
@@ -91,9 +93,9 @@ class PointEarnService(
         if (earnedAmount.signum() <= 0) return
 
         // 캐시 잔액 차감을 SELECT FOR UPDATE로 직렬화(동시 적립/취소 경합 방지).
-        // EARN이 존재하므로 계좌도 반드시 존재한다.
+        // EARN이 존재하므로 계좌도 반드시 존재한다. 없으면 데이터 불일치 → 명시적 오류.
         val account = pointAccountRepository.findByMemberIdForUpdate(memberId)
-            ?: return
+            ?: throw BusinessException(ErrorCode.POINT_ACCOUNT_NOT_FOUND)
         account.deduct(earnedAmount)
 
         // 감사 추적: CANCEL PointTransaction (원 EARN의 sourceTransactionId 공유, 양수 금액).
