@@ -26,7 +26,7 @@ class PromotionBudgetSyncScheduler(
             try {
                 val key = "promotion:budget:${promotion.id}"
                 val dbConsumed = couponRedemptionRepository.sumActiveDiscountByPromotion(promotion.id)
-                redissonClient.getAtomicLong(key).set(dbConsumed.toLong())
+                redissonClient.getAtomicLong(key).set(dbConsumed.longValueExact())
                 log.debug("Promotion {} budget synced: {}", promotion.id, dbConsumed)
             } catch (e: Exception) {
                 log.error("Failed to sync promotion {} budget: {}", promotion.id, e.message)
