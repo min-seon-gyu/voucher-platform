@@ -26,15 +26,8 @@ class PointReconciliationTest : IntegrationTestSupport() {
     private var memberId: Long = 0
     private var merchantId: Long = 0
 
-    @AfterEach
-    fun cleanup() {
-        // Restore any corrupted point account so global sumAllBalances() stays consistent
-        // for subsequent tests that call verificationService.verify().
-        // 1% of 20000 = 200 is the correct earned balance for the member in this test.
-        transactionTemplate.executeWithoutResult {
-            pointAccountRepository.overwriteBalance(memberId, BigDecimal("200"))
-        }
-    }
+    /** Captured actual balance immediately before intentional corruption; null if no corruption occurred. */
+    private var preCorruptBalance: BigDecimal? = null
 
     @BeforeEach
     fun setup() {
@@ -47,6 +40,19 @@ class PointReconciliationTest : IntegrationTestSupport() {
         merchantId = merchant.id
     }
 
+    @AfterEach
+    fun cleanup() {
+        // Restore the point account only if corruption actually happened in the test body.
+        // If the test threw before reaching the capture step, preCorruptBalance stays null
+        // and no restore is needed (the account is still in its correct earned state).
+        preCorruptBalance?.let { restore ->
+            transactionTemplate.executeWithoutResult {
+                pointAccountRepository.overwriteBalance(memberId, restore)
+            }
+        }
+        preCorruptBalance = null
+    }
+
     @Test
     fun `point invariant holds after earn and breaks when the cache is corrupted`() {
         val voucher = fixtures.issueVoucher(memberId, regionId, BigDecimal("50000"))
@@ -55,6 +61,11 @@ class PointReconciliationTest : IntegrationTestSupport() {
         val ok = verificationService.verify()
         ok.pointBalanceMatches shouldBe true
         ok.isBalanced shouldBe true
+
+        // Capture the real balance before corruption so @AfterEach can restore it exactly.
+        preCorruptBalance = transactionTemplate.execute {
+            pointAccountRepository.findByMemberId(memberId)?.balance
+        }
 
         // 캐시 잔액을 의도적으로 오염시켜 원장 net(200)과 불일치(201)로 만든다.
         transactionTemplate.executeWithoutResult {
