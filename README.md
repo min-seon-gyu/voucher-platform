@@ -1,17 +1,25 @@
-# 모바일 상품권 관리 시스템
+# 커머스 결제·프로모션 백엔드
 
-지역사랑상품권의 발행 → 유통 → 정산 전 생애주기를 관리하는 백엔드 시스템.
+대용량 트래픽에서 결제·정산·쿠폰·포인트의 재무 정합성을 보장하고, AI로 프로모션 운영을 자동화하는 커머스 백엔드.
 복식부기 원장, 보상 트랜잭션, 분산락 기반 동시성 제어로 **재무 무결성**, **감사 추적성**, **동시성 안전**을 보장한다.
+
+## 커머스 3축 핵심 역량 (전체 구현 완료)
+
+| 축 | 설명 | 주요 기술 |
+|---|---|---|
+| **결제·정산·쿠폰·포인트 신뢰성** | 복식부기 원장 + 보상 트랜잭션으로 결제·쿠폰·포인트 분개의 재무 정합성 보장. 멱등성 exactly-once. | `LedgerService`, `PromotionService`, `@Idempotent` |
+| **대용량 동시성** | Redisson 분산락 + DB 비관적 락 + Redis Lua 예산 카운터 + k6 부하테스트로 동시성 안전 증명. | `VoucherLockManager`, `RegionCounterSyncScheduler` |
+| **AI 프로모션 자동화** | 자연어 입력 → 프로모션 초안 생성 + 결정적 서버사이드 가드레일 검증. AI는 제안, 서버가 결정. | `PromotionDraftService` (Claude API) |
 
 ---
 
 ## 설계 원칙
 
-| 원칙 | 구현 방식 | 핵심 코드 |
-|------|----------|----------|
-| **재무 무결성** | 모든 금전 변동을 복식부기 원장(DEBIT/CREDIT 2행)으로 기록. 정합성 검증 배치로 캐시 잔액 vs 원장 합산 비교 | `LedgerService.record()` |
-| **감사 추적성** | 취소/환불을 DELETE 대신 보상 트랜잭션으로 처리. 원 거래 불변 보존 | `TransactionCancelService.cancel()` |
-| **동시성 안전** | Redisson 분산락 + DB 비관적 락 이중 방어. 10스레드 동시 결제 테스트로 검증 | `VoucherLockManager` |
+| 원칙 | 커머스에서의 의미 | 구현 방식 | 핵심 코드 |
+|------|----------------|----------|----------|
+| **재무 무결성** | 결제·정산·쿠폰·포인트 분개의 재무 정합성 | 모든 금전 변동을 복식부기 원장(DEBIT/CREDIT 2행)으로 기록. 정합성 검증 배치로 캐시 잔액 vs 원장 합산 비교 | `LedgerService.record()` |
+| **감사 추적성** | 환불·취소 분쟁의 완벽한 감사 추적 | 취소/환불을 DELETE 대신 보상 트랜잭션으로 처리. 원 거래 불변 보존 | `TransactionCancelService.cancel()` |
+| **동시성 안전** | 재고/예산/잔액의 동시성 안전 | Redisson 분산락 + DB 비관적 락 이중 방어. 10스레드 동시 결제 테스트로 검증 | `VoucherLockManager` |
 
 ---
 
@@ -20,12 +28,12 @@
 Aggregate 중심 모듈러 모놀리스. 7개 모듈, 84개 소스 파일, 35개 API 엔드포인트.
 
 ```
-com.komsco.voucher/
+com/commerce/
 ├── common/       ← BaseEntity, ErrorCode, AuditLog, Idempotency, FailedEvent
 ├── region/       ← 지자체 (Region + RegionPolicy + QueryDSL)
 ├── member/       ← 회원 (Member + JWT 인증 + Spring Security)
 ├── merchant/     ← 가맹점 (Merchant + 승인 플로우 + Settlement + 이의제기)
-├── voucher/      ← 상품권 (발행, 결제, 환불, 청약철회, 만료 배치)
+├── voucher/      ← 상품권 (구매, 결제, 환불, 청약철회, 만료 배치)
 ├── transaction/  ← 거래 (Transaction + 보상 트랜잭션 + 취소 API)
 ├── ledger/       ← 원장 (LedgerEntry + 정합성 검증 + 관리자 조회 API)
 └── config/       ← Redis, Security, JWT, QueryDSL, Swagger
@@ -86,12 +94,12 @@ merchant ─동기──→ transaction (정산 대상 거래 조회)
 
 ### 4. 상품권 발행 (Voucher Issuance)
 
-시민이 지자체의 상품권을 구매(발행)하는 기능. 한도 초과를 분산 환경에서도 방지한다.
+선불 바우처(상품권)를 구매·주문하는 기능. 구매 한도 초과를 분산 환경에서도 방지한다.
 
 - **상품권 코드 생성**: `SecureRandom` 기반 16자리 + Luhn mod 36 체크 디짓 (예: `SN-A3K9M2X7P1B4Q8R5`)
 - **1인 구매한도 검증**: Redisson 분산락(`member:purchase:{memberId}`)으로 동시 구매 직렬화 후 DB 합산 검증
-- **지자체 월 발행한도 검증**: Redis 원자적 카운터(`INCRBY`)로 락 없이 한도 검증. 초과 시 `DECRBY`로 롤백
-  - 데드락 방지: 분산락은 Member 1개만 사용, Region 한도는 원자적 카운터로 별도 처리
+- **지자체 월 발행한도 검증**: Redis Lua 스크립트로 `INCRBY` + 한도 비교 + 초과 시 `DECRBY` 롤백을 **단일 원자적 연산**으로 수행
+  - 데드락 방지: 분산락은 Member 1개만 사용, Region 한도는 Lua 스크립트로 별도 처리
   - Redis 재시작 대비: 매시간 배치로 DB 발행액을 Redis 카운터에 동기화
 - **원장 기록**: 구매와 동시에 `LedgerEntry` 2행(DEBIT: VOUCHER_BALANCE, CREDIT: MEMBER_CASH) 동기 생성
 - **멱등키 적용**: `Idempotency-Key` 헤더로 중복 구매 방지
@@ -207,7 +215,7 @@ merchant ─동기──→ transaction (정산 대상 거래 조회)
 
 ### 1. 왜 복식부기 원장인가
 
-단순 잔액 필드 차감은 "돈이 어디서 와서 어디로 갔는지" 추적이 불가능하다. 지역사랑상품권은 지자체 예산으로 운영되는 공공 자금이므로, 감사 시 원장만으로 완벽한 자금 추적이 가능해야 한다.
+단순 잔액 필드 차감은 "돈이 어디서 와서 어디로 갔는지" 추적이 불가능하다. 결제·정산·쿠폰·포인트가 얽힌 커머스 플랫폼에서, 감사 시 원장만으로 완벽한 자금 추적이 가능해야 한다.
 
 ```kotlin
 // LedgerService.kt — 복식부기 기록
@@ -248,20 +256,21 @@ voucher.restoreBalance(original.amount)  // 잔액 복원
 동일 상품권 동시 결제는 잔액 초과 차감이라는 치명적 사고를 유발한다.
 
 ```kotlin
-// VoucherRedemptionService.kt
-@Transactional
+// VoucherRedemptionService.kt — 분산락 → 트랜잭션(커밋) → 분산락 해제 순서 보장
 fun redeem(voucherId: Long, merchantId: Long, amount: BigDecimal): RedemptionResult {
     return lockManager.withVoucherLock(voucherId) {       // 1차: Redisson 분산락
-        val voucher = voucherRepository.findByIdForUpdate(voucherId)  // 2차: DB SELECT FOR UPDATE
-            ?: throw BusinessException(ErrorCode.ENTITY_NOT_FOUND)
+        transactionTemplate.execute { _ ->                // 트랜잭션 시작
+            val voucher = voucherRepository.findByIdForUpdate(voucherId)  // 2차: DB SELECT FOR UPDATE
+                ?: throw BusinessException(ErrorCode.ENTITY_NOT_FOUND)
 
-        voucher.redeem(amount)                            // 잔액 차감
-        val tx = transactionService.create(...)           // 거래 생성
-        ledgerService.record(...)                         // 원장 기록 (동기, 같은 TX)
-        tx.complete()
-        eventPublisher.publishEvent(VoucherRedeemedEvent(...))  // 감사 로그 (이벤트)
-        // ...
-    }
+            voucher.redeem(amount)                        // 잔액 차감 (compareTo로 0 비교)
+            val tx = transactionService.create(...)       // 거래 생성
+            ledgerService.record(...)                     // 원장 기록 (동기, 같은 TX)
+            tx.complete()
+            eventPublisher.publishEvent(VoucherRedeemedEvent(...))  // 감사 로그 (이벤트)
+            // ...
+        }!!  // 여기서 커밋
+    }  // 커밋 후 락 해제 — 다른 스레드가 항상 커밋된 데이터를 읽음
 }
 ```
 
@@ -283,9 +292,9 @@ Redis TTL(24시간)로 빠르게 중복을 감지하고, DB에도 저장하여 R
 
 | 작업 | 전략 | 방지하는 장애 |
 |------|------|-------------|
-| 상품권 결제 | Redisson 분산락 + DB 비관적 락 | 이중 사용, 잔액 초과 차감 |
-| 상품권 발행 | Member 분산락 + Region Redis 원자적 카운터(INCRBY) | 한도 초과 발행, 데드락 |
-| 잔액 환불 / 청약철회 | Redisson 분산락 (`voucher:{id}`) | 사용 중 환불 경합 |
+| 상품권 결제 | Redisson 분산락 + DB 비관적 락 + TransactionTemplate | 이중 사용, 잔액 초과 차감, 락-커밋 역전 |
+| 상품권 발행 | Member 분산락 + Region Redis Lua 스크립트 + TransactionTemplate | 한도 초과 발행, 데드락 |
+| 잔액 환불 / 청약철회 | Redisson 분산락 + TransactionTemplate | 사용 중 환불 경합 |
 | 만료 배치 | DB 비관적 락 (건별 `REQUIRES_NEW` + `SELECT FOR UPDATE`) | 만료 중 결제 경합 |
 | 가맹점 수정 | JPA Optimistic Lock (`@Version`) | 동시 상태 변경 |
 | 정산 생성 | DB Unique Constraint (`merchant_id + period`) | 중복 정산 |
@@ -432,15 +441,15 @@ komsco/
 ├── docs/
 │   ├── 01-domain-design.md           # 도메인 & 비즈니스 규칙 (엔티티, 상태머신, 불변식)
 │   ├── 02-architecture-decisions.md   # 아키텍처 설계 결정 (동시성, 이벤트, 감사, 모니터링)
-│   ├── 03-implementation-roadmap.md   # 구현 로드맵 (17개 태스크, 의존성 그래프)
+│   ├── 03-implementation-roadmap.md   # 구현 로드맵 (16개 태스크, 의존성 그래프)
 │   └── 04-implementation-plan.md      # 상세 구현 계획 (TDD 기반 단계별 코드)
 ├── src/main/kotlin/                   # 84 소스 파일
-│   └── com/komsco/voucher/
+│   └── com/commerce/
 │       ├── common/   (15)  ← BaseEntity, ErrorCode, Audit, Idempotency
 │       ├── region/    (9)  ← Region + RegionPolicy + QueryDSL
 │       ├── member/    (8)  ← Member + JWT + Security
 │       ├── merchant/ (12)  ← Merchant + Settlement + Events
-│       ├── voucher/  (19)  ← Voucher + 발행/결제/환불/철회/만료
+│       ├── voucher/  (19)  ← Voucher + 구매/결제/환불/철회/만료
 │       ├── transaction/ (7) ← Transaction + 보상 트랜잭션
 │       ├── ledger/    (7)  ← LedgerEntry + 정합성 검증
 │       └── config/    (5)  ← Redis, Security, JWT, QueryDSL, Swagger
