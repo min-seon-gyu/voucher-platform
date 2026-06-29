@@ -32,6 +32,11 @@ class PointEarnService(
      * baseAmount = 쿠폰 할인 적용 후 실제 결제액(plain redeem에서는 결제 금액 그대로).
      * 적립액이 0이면 아무 것도 기록하지 않고 0을 반환한다.
      * 동일 회원 동시 적립은 findByMemberIdForUpdate(SELECT FOR UPDATE)로 직렬화한다.
+     *
+     * **JPA dirty-checking 의존**: [PointAccount.earn]으로 증가한 잔액은 별도의 `save()` 호출 없이
+     * JPA 더티 체킹(dirty-checking)으로 영속화된다. 따라서 이 메서드는 **반드시 호출자의 활성 트랜잭션
+     * 범위 안에서 실행**되어야 한다(호출자가 `@Transactional`을 보유해야 함).
+     * 반면 [PointTransaction] 신규 행과 원장([LedgerService.record]) 행은 명시적으로 저장된다.
      */
     fun earn(memberId: Long, baseAmount: BigDecimal, sourceTransactionId: Long): BigDecimal {
         val earnAmount = calculateEarn(baseAmount)
