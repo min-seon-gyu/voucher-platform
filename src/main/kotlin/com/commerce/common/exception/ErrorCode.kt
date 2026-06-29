@@ -56,4 +56,8 @@ enum class ErrorCode(
 
     // Point
     POINT_ACCOUNT_NOT_FOUND(HttpStatus.NOT_FOUND, "포인트 계정을 찾을 수 없습니다"),
+
+    // AI Promotion Assistant
+    AI_DRAFT_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "AI 프로모션 초안 기능이 비활성화되어 있습니다"),
+    AI_DRAFT_GENERATION_FAILED(HttpStatus.BAD_GATEWAY, "AI 초안 생성에 실패했습니다. 잠시 후 다시 시도해주세요"),
 }
