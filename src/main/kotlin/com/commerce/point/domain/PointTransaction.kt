@@ -18,8 +18,8 @@ import java.time.LocalDateTime
 @Table(
     name = "point_transactions",
     indexes = [
-        Index(name = "idx_point_tx_member", columnList = "memberId, createdAt"),
-        Index(name = "idx_point_tx_source", columnList = "sourceTransactionId"),
+        Index(name = "idx_point_tx_member", columnList = "member_id,created_at"),
+        Index(name = "idx_point_tx_source", columnList = "source_transaction_id"),
     ]
 )
 class PointTransaction(
