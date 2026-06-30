@@ -1,9 +1,10 @@
 .gradle/
 build/
-!gradle/wrapper/gradle-wrapper.jar
 *.class
 *.jar
 *.war
+# keep the Gradle wrapper jar (negation must come AFTER *.jar to take effect)
+!gradle/wrapper/gradle-wrapper.jar
 .idea/
 *.iml
 out/
