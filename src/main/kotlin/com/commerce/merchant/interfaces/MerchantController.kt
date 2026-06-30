@@ -1,6 +1,7 @@
 package com.commerce.merchant.interfaces
 
 import com.commerce.common.api.ApiResponse
+import com.commerce.common.security.SecurityUtils
 import com.commerce.merchant.application.MerchantService
 import com.commerce.merchant.application.RegisterMerchantRequest
 import com.commerce.merchant.domain.Merchant
@@ -36,7 +37,10 @@ class MerchantController(
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     fun register(@RequestBody request: RegisterMerchantRequest): ApiResponse<MerchantResponse> =
-        ApiResponse.ok(MerchantResponse.from(merchantService.register(request)))
+        // 소유자는 인증 주체로 강제(본문 ownerId 불신) — 타인 명의 등록·임의 권한 상승 차단.
+        ApiResponse.ok(MerchantResponse.from(
+            merchantService.register(request.copy(ownerId = SecurityUtils.currentMemberId()))
+        ))
 
     @PostMapping("/{id}/approve")
     fun approve(@PathVariable id: Long): ApiResponse<MerchantResponse> =

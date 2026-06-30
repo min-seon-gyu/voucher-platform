@@ -23,6 +23,8 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice
 
 private const val ATTR_OWNED_KEY = "idempotency.ownedKey"
 private const val ATTR_COMPLETED = "idempotency.completed"
+// 비즈니스 트랜잭션이 성공(커밋)했음을 표시 — 멱등 결과 영속화 성공 여부와 별개로 관리한다.
+private const val ATTR_BUSINESS_SUCCEEDED = "idempotency.businessSucceeded"
 
 @Component
 class IdempotencyInterceptor(
@@ -83,18 +85,28 @@ class IdempotencyInterceptor(
         ex: Exception?,
     ) {
         val key = request.getAttribute(ATTR_OWNED_KEY) as? String ?: return
-        val completed = request.getAttribute(ATTR_COMPLETED) as? Boolean ?: false
-        if (!completed) {
-            // 비즈니스 처리가 실패(예외/4xx·5xx)했다면 선점을 해제해 재시도가 가능하게 한다.
+        val businessSucceeded = request.getAttribute(ATTR_BUSINESS_SUCCEEDED) as? Boolean ?: false
+        // 비즈니스가 성공(커밋)했으면 멱등 결과 기록 실패와 무관하게 선점을 유지한다 —
+        // 여기서 release 하면 재시도가 이미 커밋된 머니 작업을 재실행해 exactly-once가 깨진다.
+        // 비즈니스 실패(예외/에러 응답)일 때만 선점을 해제해 정상적 재시도를 허용한다.
+        if (!businessSucceeded) {
             store.release(key)
         }
     }
 
-    /** 선점한 요청이 성공 응답을 만들었을 때 호출 — DB COMPLETED + Redis 캐시 */
+    /**
+     * 선점한 요청이 성공 응답을 만들었을 때 호출 — 멱등 결과(DB COMPLETED + Redis 캐시)를 best-effort로 영속화한다.
+     * 영속화 실패는 로그만 남긴다: 비즈니스는 이미 커밋됐고 5xx로 되돌릴 수 없으며, 선점이 유지되어(afterCompletion이
+     * release 하지 않음) 후속 중복 요청은 409로 거절되므로 재실행되지 않는다.
+     */
     fun markCompleted(request: HttpServletRequest, body: String, status: Int) {
         val key = request.getAttribute(ATTR_OWNED_KEY) as? String ?: return
-        store.complete(key, body, status)
-        request.setAttribute(ATTR_COMPLETED, true)
+        try {
+            store.complete(key, body, status)
+            request.setAttribute(ATTR_COMPLETED, true)
+        } catch (e: Exception) {
+            log.error("Idempotency completion persist failed for key {} (business already committed): {}", key, e.message)
+        }
     }
 
     private fun writeResponse(response: HttpServletResponse, cached: CachedResponse) {
@@ -132,6 +144,9 @@ class IdempotencyResponseAdvice(
         if (servletRequest.getAttribute(ATTR_OWNED_KEY) == null) return body
 
         if (body != null) {
+            // 이 시점에 @Idempotent 컨트롤러가 성공 반환 → 비즈니스 트랜잭션이 커밋됨을 표시한다.
+            // 이후 markCompleted(영속화)가 실패해도 선점이 유지되어 재실행을 막는다.
+            servletRequest.setAttribute(ATTR_BUSINESS_SUCCEEDED, true)
             val responseBody = objectMapper.writeValueAsString(body)
             // 원래 응답의 실제 상태코드를 캡처해 캐시한다. @ResponseStatus(예: 201 CREATED)는
             // 메시지 변환(ResponseBodyAdvice) 시점 이전에 응답에 반영되므로 여기서 읽으면 정확하다.

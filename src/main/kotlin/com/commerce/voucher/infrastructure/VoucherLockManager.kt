@@ -26,6 +26,14 @@ class VoucherLockManager(
     fun <T> withCouponLock(couponId: Long, action: () -> T): T =
         withLock("coupon:$couponId", action)
 
+    /**
+     * 동일 회원의 같은 프로모션 상환을 직렬화하는 최외측 락.
+     * 쿠폰별 락만으로는 한 회원이 같은 프로모션의 서로 다른 쿠폰을 동시 상환할 때 perMemberLimit이 깨지므로,
+     * coupon 락보다 바깥에서 (promotion, member) 단위로 직렬화한다.
+     */
+    fun <T> withPromotionMemberLock(promotionId: Long, memberId: Long, action: () -> T): T =
+        withLock("promotion:$promotionId:member:$memberId", action)
+
     private fun <T> withLock(key: String, action: () -> T): T {
         val lockType = key.substringBefore(':')
 

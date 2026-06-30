@@ -78,4 +78,30 @@ class AdminAuthorizationTest : IntegrationTestSupport() {
         mockMvc.get("/api/v1/regions")
             .andExpect { status { isOk() } }
     }
+
+    @Test
+    fun `promotion create without token returns 401`() {
+        mockMvc.post("/api/v1/promotions") {
+            contentType = org.springframework.http.MediaType.APPLICATION_JSON
+            content = "{}"
+        }.andExpect { status { isUnauthorized() } }
+    }
+
+    @Test
+    fun `promotion create with USER role returns 403`() {
+        val token = jwtTokenProvider.generateToken(1L, "USER")
+        mockMvc.post("/api/v1/promotions") {
+            header("Authorization", "Bearer $token")
+            contentType = org.springframework.http.MediaType.APPLICATION_JSON
+            content = "{}"
+        }.andExpect { status { isForbidden() } }
+    }
+
+    @Test
+    fun `merchant register without token returns 401`() {
+        mockMvc.post("/api/v1/merchants") {
+            contentType = org.springframework.http.MediaType.APPLICATION_JSON
+            content = "{}"
+        }.andExpect { status { isUnauthorized() } }
+    }
 }

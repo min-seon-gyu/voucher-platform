@@ -59,10 +59,15 @@ class RedemptionOrchestrator(
         if (couponId == null) {
             return redemptionService.redeem(voucherId, merchantId, orderTotal)
         }
-        // 정준 락 순서: coupon(외측) → voucher(내측) → DB tx
-        return lockManager.withCouponLock(couponId) {
-            lockManager.withVoucherLock(voucherId) {
-                redeemWithCoupon(voucherId, merchantId, orderTotal, couponId)
+        // 락 키 도출용 사전 조회(쿠폰의 promotionId·memberId). 본 검증은 락 내부에서 재수행한다.
+        val couponMeta = couponRepository.findById(couponId)
+            .orElseThrow { BusinessException(ErrorCode.COUPON_NOT_FOUND) }
+        // 정준 락 순서: promotion·member(최외측, 동일회원 다른쿠폰 동시상환 직렬화) → coupon → voucher → DB tx
+        return lockManager.withPromotionMemberLock(couponMeta.promotionId, couponMeta.memberId) {
+            lockManager.withCouponLock(couponId) {
+                lockManager.withVoucherLock(voucherId) {
+                    redeemWithCoupon(voucherId, merchantId, orderTotal, couponId)
+                }
             }
         }
     }

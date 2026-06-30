@@ -17,6 +17,7 @@ import com.commerce.transaction.infrastructure.TransactionJpaRepository
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
@@ -86,20 +87,35 @@ class SettlementService(
         val settlement = getById(settlementId)
         settlement.confirm()
 
-        // 정산 확정 시 원장 기록: 가맹점 미수금 → 정산 미지급금
-        val tx = transactionService.create(
-            type = TransactionType.SETTLEMENT,
-            amount = settlement.totalAmount,
-            merchantId = settlement.merchantId,
+        // 확정 시점에 totalAmount를 재계산한다(스냅샷 신뢰 금지).
+        // calculate 이후·confirm 이전에 취소된 결제는 CANCELLED가 되어 합산에서 제외되므로,
+        // 취소된 결제분을 가맹점에 지급(과지급)하고 MERCHANT_RECEIVABLE을 음수로 만드는 결함을 막는다.
+        settlement.totalAmount = transactionRepository.sumAmountByMerchantAndTypeAndPeriod(
+            settlement.merchantId,
+            TransactionType.REDEMPTION,
+            TransactionStatus.COMPLETED,
+            settlement.periodStart.atStartOfDay(),
+            settlement.periodEnd.atTime(LocalTime.MAX),
         )
-        ledgerService.record(
-            debitAccount = AccountCode.SETTLEMENT_PAYABLE,
-            creditAccount = AccountCode.MERCHANT_RECEIVABLE,
-            amount = settlement.totalAmount,
-            transactionId = tx.id,
-            entryType = LedgerEntryType.SETTLEMENT,
-        )
-        tx.complete()
+
+        // 0원 정산(해당 기간 결제 없음/전부 취소)은 원장 분개를 만들지 않는다 — Transaction은 양수 금액만 허용하므로
+        // 0원 거래 생성은 예외가 되어 정산이 PENDING에 영구 고착된다.
+        if (settlement.totalAmount.compareTo(BigDecimal.ZERO) > 0) {
+            // 정산 확정 시 원장 기록: 가맹점 미수금 → 정산 미지급금
+            val tx = transactionService.create(
+                type = TransactionType.SETTLEMENT,
+                amount = settlement.totalAmount,
+                merchantId = settlement.merchantId,
+            )
+            ledgerService.record(
+                debitAccount = AccountCode.SETTLEMENT_PAYABLE,
+                creditAccount = AccountCode.MERCHANT_RECEIVABLE,
+                amount = settlement.totalAmount,
+                transactionId = tx.id,
+                entryType = LedgerEntryType.SETTLEMENT,
+            )
+            tx.complete()
+        }
 
         eventPublisher.publishEvent(
             SettlementConfirmedEvent(

@@ -83,7 +83,8 @@ class MemberService(
     @Transactional
     fun promoteToMerchantOwner(memberId: Long): Member {
         val member = getById(memberId)
-        member.role = MemberRole.MERCHANT_OWNER
+        // USER만 승격한다 — ADMIN을 MERCHANT_OWNER로 강등하거나 권한을 임의 변경하지 않는다.
+        if (member.role == MemberRole.USER) member.role = MemberRole.MERCHANT_OWNER
         return member
     }
 }

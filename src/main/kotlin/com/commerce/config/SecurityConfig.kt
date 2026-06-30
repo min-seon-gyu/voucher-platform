@@ -48,9 +48,13 @@ class SecurityConfig(
                     HttpMethod.POST,
                     "/api/v1/members/*/suspend", "/api/v1/members/*/unsuspend", "/api/v1/members/*/withdraw",
                 ).hasRole("ADMIN")
+                // 프로모션 생성은 플랫폼 출연 캠페인 → ADMIN 전용(쿠폰 발급 /{id}/coupons는 회원 인증으로 별도).
+                it.requestMatchers(HttpMethod.POST, "/api/v1/promotions").hasRole("ADMIN")
 
                 // ── 인증 필요(역할 무관) ─────────────────────────────────────────────
                 it.requestMatchers("/api/v1/me").authenticated()
+                // 가맹점 등록: 인증 필수 + 컨트롤러에서 ownerId를 JWT 주체로 강제(본인 가맹점만).
+                it.requestMatchers(HttpMethod.POST, "/api/v1/merchants").authenticated()
                 // 상품권 자금 이동 엔드포인트: 인증 필수 + 컨트롤러에서 JWT 주체로 소유권 검증.
                 it.requestMatchers(
                     HttpMethod.POST,

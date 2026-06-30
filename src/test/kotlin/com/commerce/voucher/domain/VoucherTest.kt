@@ -127,6 +127,33 @@ class VoucherTest : DescribeSpec({
             v.balance shouldBe BigDecimal("50000")
             v.status shouldBe VoucherStatus.ACTIVE
         }
+
+        it("should allow restore from EXHAUSTED (full redemption cancel)") {
+            val v = createVoucher(status = VoucherStatus.EXHAUSTED, balance = BigDecimal.ZERO)
+            v.restoreBalance(BigDecimal("50000"))
+            v.status shouldBe VoucherStatus.ACTIVE
+        }
+
+        it("should allow restore from EXPIRED (cancelling a pre-expiry redemption — no cash outflow)") {
+            val v = createVoucher(status = VoucherStatus.EXPIRED, balance = BigDecimal.ZERO)
+            v.restoreBalance(BigDecimal("30000"))
+            v.balance shouldBe BigDecimal("30000")
+            v.status shouldBe VoucherStatus.PARTIALLY_USED
+        }
+
+        // 현금이 지급(진행)된 상태는 복원 차단 — 무에서 가치 재생성 방지.
+        listOf(
+            VoucherStatus.REFUNDED,
+            VoucherStatus.WITHDRAWN,
+            VoucherStatus.REFUND_REQUESTED,
+            VoucherStatus.WITHDRAWAL_REQUESTED,
+        ).forEach { terminal ->
+            it("should reject restore from $terminal (no reviving cash-disbursed vouchers)") {
+                val v = createVoucher(status = terminal, balance = BigDecimal.ZERO)
+                val ex = shouldThrow<BusinessException> { v.restoreBalance(BigDecimal("10000")) }
+                ex.errorCode shouldBe ErrorCode.INVALID_STATE_TRANSITION
+            }
+        }
     }
 
     describe("usageRatio") {
