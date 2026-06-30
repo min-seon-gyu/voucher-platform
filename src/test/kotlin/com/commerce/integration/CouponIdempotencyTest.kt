@@ -1,5 +1,6 @@
 package com.commerce.integration
 
+import com.commerce.config.JwtTokenProvider
 import com.commerce.ledger.application.LedgerVerificationService
 import com.commerce.promotion.domain.CouponStatus
 import com.commerce.promotion.infrastructure.CouponJpaRepository
@@ -63,6 +64,7 @@ class CouponIdempotencyTest {
 
     @Autowired lateinit var restTemplate: TestRestTemplate
     @Autowired lateinit var fixtures: TestFixtures
+    @Autowired lateinit var jwtTokenProvider: JwtTokenProvider
     @Autowired lateinit var voucherRepository: VoucherJpaRepository
     @Autowired lateinit var couponRepository: CouponJpaRepository
     @Autowired lateinit var couponRedemptionRepository: CouponRedemptionJpaRepository
@@ -101,6 +103,7 @@ class CouponIdempotencyTest {
         val headers = HttpHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("Idempotency-Key", idempotencyKey)
+            set("Authorization", "Bearer ${jwtTokenProvider.generateToken(memberId, "USER")}")
         }
         val body = """{"merchantId": $merchantId, "amount": 10000, "couponId": ${coupon.id}}"""
         val request = HttpEntity(body, headers)

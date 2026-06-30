@@ -1,5 +1,6 @@
 package com.commerce.integration
 
+import com.commerce.config.JwtTokenProvider
 import com.commerce.support.TestFixtures
 import com.commerce.transaction.domain.TransactionStatus
 import com.commerce.transaction.infrastructure.TransactionJpaRepository
@@ -57,6 +58,7 @@ class IdempotencyConcurrencyTest {
 
     @Autowired lateinit var restTemplate: TestRestTemplate
     @Autowired lateinit var fixtures: TestFixtures
+    @Autowired lateinit var jwtTokenProvider: JwtTokenProvider
     @Autowired lateinit var voucherRepository: VoucherJpaRepository
     @Autowired lateinit var transactionRepository: TransactionJpaRepository
 
@@ -90,6 +92,7 @@ class IdempotencyConcurrencyTest {
         val headers = HttpHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("Idempotency-Key", idempotencyKey)
+            set("Authorization", "Bearer ${jwtTokenProvider.generateToken(memberId, "USER")}")
         }
         val request = HttpEntity("""{"merchantId": $merchantId, "amount": 10000}""", headers)
         val url = "/api/v1/vouchers/${voucher.id}/redeem"

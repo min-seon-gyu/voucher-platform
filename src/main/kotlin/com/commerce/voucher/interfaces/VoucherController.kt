@@ -4,6 +4,7 @@ import com.commerce.common.api.ApiResponse
 import com.commerce.common.exception.BusinessException
 import com.commerce.common.exception.ErrorCode
 import com.commerce.common.idempotency.Idempotent
+import com.commerce.common.security.SecurityUtils
 import com.commerce.voucher.application.VoucherIssueService
 import com.commerce.voucher.application.VoucherRefundService
 import com.commerce.voucher.application.VoucherWithdrawalService
@@ -54,20 +55,30 @@ class VoucherController(
     @ResponseStatus(HttpStatus.CREATED)
     @Idempotent
     fun purchase(@Valid @RequestBody request: PurchaseVoucherRequest): ApiResponse<VoucherResponse> =
-        ApiResponse.ok(VoucherResponse.from(issueService.issue(request.memberId, request.regionId, request.faceValue)))
+        ApiResponse.ok(VoucherResponse.from(issueService.issue(SecurityUtils.currentMemberId(), request.regionId, request.faceValue)))
 
     @PostMapping("/{id}/redeem")
     @Idempotent
-    fun redeem(@PathVariable id: Long, @Valid @RequestBody request: RedeemRequest): ApiResponse<RedemptionResult> =
-        ApiResponse.ok(redemptionOrchestrator.redeem(id, request.merchantId, request.amount, request.couponId))
+    fun redeem(@PathVariable id: Long, @Valid @RequestBody request: RedeemRequest): ApiResponse<RedemptionResult> {
+        requireOwnership(id) // 결제 서비스는 소유권을 검증하지 않으므로 컨트롤러에서 강제(IDOR 차단)
+        return ApiResponse.ok(redemptionOrchestrator.redeem(id, request.merchantId, request.amount, request.couponId))
+    }
 
     @PostMapping("/{id}/refund")
     @Idempotent
-    fun refund(@PathVariable id: Long, @RequestBody request: RefundRequest): ApiResponse<VoucherResponse> =
-        ApiResponse.ok(VoucherResponse.from(refundService.refund(id, request.memberId)))
+    fun refund(@PathVariable id: Long): ApiResponse<VoucherResponse> =
+        ApiResponse.ok(VoucherResponse.from(refundService.refund(id, SecurityUtils.currentMemberId())))
 
     @PostMapping("/{id}/withdraw")
     @Idempotent
-    fun withdraw(@PathVariable id: Long, @RequestBody request: WithdrawRequest): ApiResponse<VoucherResponse> =
-        ApiResponse.ok(VoucherResponse.from(withdrawalService.withdraw(id, request.memberId)))
+    fun withdraw(@PathVariable id: Long): ApiResponse<VoucherResponse> =
+        ApiResponse.ok(VoucherResponse.from(withdrawalService.withdraw(id, SecurityUtils.currentMemberId())))
+
+    /** 인증 주체가 해당 바우처 소유자인지 검증한다(본문 식별자 불신, 미인증 401·타인 자원 403). */
+    private fun requireOwnership(voucherId: Long) {
+        val voucher = voucherJpaRepository.findById(voucherId)
+            .orElseThrow { BusinessException(ErrorCode.ENTITY_NOT_FOUND) }
+        if (voucher.memberId != SecurityUtils.currentMemberId())
+            throw BusinessException(ErrorCode.ACCESS_DENIED)
+    }
 }

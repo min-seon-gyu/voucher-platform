@@ -1,5 +1,6 @@
 package com.commerce.integration
 
+import com.commerce.config.JwtTokenProvider
 import com.commerce.support.TestFixtures
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
@@ -54,6 +55,7 @@ class IdempotencyStatusCodeTest {
 
     @Autowired lateinit var restTemplate: TestRestTemplate
     @Autowired lateinit var fixtures: TestFixtures
+    @Autowired lateinit var jwtTokenProvider: JwtTokenProvider
 
     @Test
     fun `idempotent replay preserves original 201 CREATED status`() {
@@ -63,8 +65,10 @@ class IdempotencyStatusCodeTest {
         val headers = HttpHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("Idempotency-Key", UUID.randomUUID().toString())
+            set("Authorization", "Bearer ${jwtTokenProvider.generateToken(member.id, "USER")}")
         }
-        val body = """{"memberId": ${member.id}, "regionId": ${region.id}, "faceValue": 50000}"""
+        // 구매자 신원은 JWT 주체에서 도출(본문 memberId 불신).
+        val body = """{"regionId": ${region.id}, "faceValue": 50000}"""
         val request = HttpEntity(body, headers)
         val url = "/api/v1/vouchers/purchase"
 
