@@ -5,10 +5,13 @@ import com.commerce.common.exception.ErrorCode
 import com.commerce.config.JwtTokenProvider
 import com.commerce.member.domain.Member
 import com.commerce.member.domain.MemberRole
+import com.commerce.member.domain.event.MemberSuspendedEvent
+import com.commerce.member.domain.event.MemberWithdrawnEvent
 import com.commerce.member.infrastructure.MemberJpaRepository
 import com.commerce.member.interfaces.dto.LoginRequest
 import com.commerce.member.interfaces.dto.RegisterMemberRequest
 import com.commerce.member.interfaces.dto.TokenResponse
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -19,6 +22,7 @@ class MemberService(
     private val memberRepository: MemberJpaRepository,
     private val passwordEncoder: PasswordEncoder,
     private val jwtTokenProvider: JwtTokenProvider,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
 
     @Transactional
@@ -57,6 +61,7 @@ class MemberService(
     fun suspend(memberId: Long): Member {
         val member = getById(memberId)
         member.suspend()
+        eventPublisher.publishEvent(MemberSuspendedEvent(member.id))
         return member
     }
 
@@ -71,6 +76,7 @@ class MemberService(
     fun withdraw(memberId: Long): Member {
         val member = getById(memberId)
         member.withdraw()
+        eventPublisher.publishEvent(MemberWithdrawnEvent(member.id))
         return member
     }
 

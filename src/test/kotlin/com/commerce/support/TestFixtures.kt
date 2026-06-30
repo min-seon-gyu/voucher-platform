@@ -57,6 +57,7 @@ class TestFixtures(
         code: String = "SN", // (미사용) 코드는 nextRegionCode()로 유니크 생성해 충돌 방지
         monthlyLimit: BigDecimal = BigDecimal("10000000000"),
         purchaseLimit: BigDecimal = BigDecimal("5000000"),
+        settlementPeriod: String = "MONTHLY",
     ): Region {
         return regionService.create(
             CreateRegionRequest(
@@ -65,6 +66,7 @@ class TestFixtures(
                 discountRate = BigDecimal("0.10"),
                 purchaseLimitPerPerson = purchaseLimit,
                 monthlyIssuanceLimit = monthlyLimit,
+                settlementPeriod = settlementPeriod,
             )
         )
     }

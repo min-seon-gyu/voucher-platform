@@ -17,7 +17,7 @@ class AuditEventListener(
 
     @TransactionalEventListener(phase = TransactionPhase.BEFORE_COMMIT)
     fun handleCriticalAudit(event: DomainEvent) {
-        val severity = resolveSeverity(event.eventType)
+        val severity = AuditEventTypePolicy.resolveSeverity(event.eventType)
         if (severity != AuditSeverity.CRITICAL) return
 
         saveAuditLog(event, severity)
@@ -26,7 +26,7 @@ class AuditEventListener(
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     fun handleNonCriticalAudit(event: DomainEvent) {
-        val severity = resolveSeverity(event.eventType)
+        val severity = AuditEventTypePolicy.resolveSeverity(event.eventType)
         if (severity == AuditSeverity.CRITICAL) return
 
         try {
@@ -44,7 +44,7 @@ class AuditEventListener(
             severity = severity,
             aggregateType = event.aggregateType,
             aggregateId = event.aggregateId,
-            action = resolveAction(event.eventType),
+            action = AuditEventTypePolicy.resolveAction(event.eventType),
             previousState = event.previousState,
             currentState = event.currentState,
             createdAt = event.occurredAt,
@@ -68,30 +68,4 @@ class AuditEventListener(
         }
     }
 
-    private fun resolveSeverity(eventType: String): AuditSeverity = when (eventType) {
-        in CRITICAL_EVENTS -> AuditSeverity.CRITICAL
-        in HIGH_EVENTS -> AuditSeverity.HIGH
-        else -> AuditSeverity.MEDIUM
-    }
-
-    private fun resolveAction(eventType: String): String = when {
-        eventType.contains("ISSUED") || eventType.contains("APPROVED") -> "CREATE"
-        eventType.contains("REDEEMED") || eventType.contains("REFUNDED") || eventType.contains("WITHDRAWN") -> "STATE_CHANGE"
-        eventType.contains("CANCELLED") -> "CANCEL"
-        eventType.contains("EXPIRED") -> "EXPIRE"
-        eventType.contains("CONFIRMED") -> "CONFIRM"
-        else -> "UPDATE"
-    }
-
-    companion object {
-        val CRITICAL_EVENTS = setOf(
-            "VOUCHER_ISSUED", "VOUCHER_REDEEMED", "VOUCHER_REFUNDED",
-            "VOUCHER_WITHDRAWN", "TRANSACTION_CANCELLED",
-            "SETTLEMENT_CONFIRMED", "MANUAL_ADJUSTMENT",
-        )
-        val HIGH_EVENTS = setOf(
-            "MERCHANT_APPROVED", "MERCHANT_REJECTED", "MERCHANT_TERMINATED",
-            "MEMBER_SUSPENDED", "MEMBER_WITHDRAWN", "REGION_POLICY_CHANGED",
-        )
-    }
 }

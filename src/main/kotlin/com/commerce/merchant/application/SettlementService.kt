@@ -7,7 +7,9 @@ import com.commerce.ledger.domain.AccountCode
 import com.commerce.ledger.domain.LedgerEntryType
 import com.commerce.merchant.domain.Settlement
 import com.commerce.merchant.domain.event.SettlementConfirmedEvent
+import com.commerce.merchant.infrastructure.MerchantJpaRepository
 import com.commerce.merchant.infrastructure.SettlementJpaRepository
+import com.commerce.region.domain.SettlementPeriod
 import com.commerce.transaction.application.TransactionService
 import com.commerce.transaction.domain.TransactionStatus
 import com.commerce.transaction.domain.TransactionType
@@ -15,8 +17,10 @@ import com.commerce.transaction.infrastructure.TransactionJpaRepository
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.ZoneId
 
 @Service
 @Transactional(readOnly = true)
@@ -25,8 +29,33 @@ class SettlementService(
     private val transactionRepository: TransactionJpaRepository,
     private val transactionService: TransactionService,
     private val ledgerService: LedgerService,
+    private val merchantRepository: MerchantJpaRepository,
     private val eventPublisher: ApplicationEventPublisher,
 ) {
+
+    /**
+     * 가맹점 소속 지자체의 정산 주기(일/주/월)에 맞춰 KST 역월 기준 정산 기간을 산출한 뒤 정산한다.
+     * 기준일(referenceDate)이 속한 주기 구간 [start, end]를 닫힌 구간으로 계산한다.
+     *   - DAILY  : 기준일 당일
+     *   - WEEKLY : 기준일이 속한 ISO 주(월~일)
+     *   - MONTHLY: 기준일이 속한 달의 1일~말일
+     */
+    @Transactional
+    fun calculateForPeriod(
+        merchantId: Long,
+        referenceDate: LocalDate = LocalDate.now(KST),
+    ): Settlement {
+        val merchant = merchantRepository.findById(merchantId)
+            .orElseThrow { BusinessException(ErrorCode.ENTITY_NOT_FOUND) }
+        val (start, end) = resolvePeriod(merchant.region.policy.settlementPeriod, referenceDate)
+        return calculate(merchantId, start, end)
+    }
+
+    private fun resolvePeriod(period: SettlementPeriod, ref: LocalDate): Pair<LocalDate, LocalDate> = when (period) {
+        SettlementPeriod.DAILY -> ref to ref
+        SettlementPeriod.WEEKLY -> ref.with(DayOfWeek.MONDAY) to ref.with(DayOfWeek.SUNDAY)
+        SettlementPeriod.MONTHLY -> ref.withDayOfMonth(1) to ref.withDayOfMonth(ref.lengthOfMonth())
+    }
 
     @Transactional
     fun calculate(merchantId: Long, periodStart: LocalDate, periodEnd: LocalDate): Settlement {
@@ -91,7 +120,19 @@ class SettlementService(
         return settlement
     }
 
+    /** 확정된 정산을 지급 완료 처리한다. CONFIRMED 상태에서만 PAID로 전이 가능. */
+    @Transactional
+    fun markPaid(settlementId: Long): Settlement {
+        val settlement = getById(settlementId)
+        settlement.pay()
+        return settlement
+    }
+
     fun getById(id: Long): Settlement =
         settlementRepository.findById(id)
             .orElseThrow { BusinessException(ErrorCode.ENTITY_NOT_FOUND) }
+
+    companion object {
+        private val KST = ZoneId.of("Asia/Seoul")
+    }
 }

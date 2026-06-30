@@ -12,6 +12,7 @@ import org.springframework.http.converter.HttpMessageConverter
 import org.springframework.http.server.ServerHttpRequest
 import org.springframework.http.server.ServerHttpResponse
 import org.springframework.http.server.ServletServerHttpRequest
+import org.springframework.http.server.ServletServerHttpResponse
 import org.springframework.stereotype.Component
 import org.springframework.web.bind.annotation.ControllerAdvice
 import org.springframework.web.method.HandlerMethod
@@ -132,7 +133,12 @@ class IdempotencyResponseAdvice(
 
         if (body != null) {
             val responseBody = objectMapper.writeValueAsString(body)
-            idempotencyInterceptor.markCompleted(servletRequest, responseBody, HttpStatus.OK.value())
+            // 원래 응답의 실제 상태코드를 캡처해 캐시한다. @ResponseStatus(예: 201 CREATED)는
+            // 메시지 변환(ResponseBodyAdvice) 시점 이전에 응답에 반영되므로 여기서 읽으면 정확하다.
+            // 중복 재시도 시 200으로 회귀하지 않고 원래 상태코드(201 등)를 그대로 재반환한다.
+            val status = (response as? ServletServerHttpResponse)?.servletResponse?.status
+                ?.takeIf { it > 0 } ?: HttpStatus.OK.value()
+            idempotencyInterceptor.markCompleted(servletRequest, responseBody, status)
         }
         return body
     }

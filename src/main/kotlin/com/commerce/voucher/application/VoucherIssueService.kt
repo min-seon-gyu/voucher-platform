@@ -18,6 +18,7 @@ import com.commerce.voucher.infrastructure.VoucherLockManager
 import org.redisson.api.RScript
 import org.redisson.api.RedissonClient
 import org.redisson.client.codec.StringCodec
+import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
@@ -39,71 +40,96 @@ class VoucherIssueService(
     private val eventPublisher: ApplicationEventPublisher,
     private val transactionTemplate: TransactionTemplate,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
 
     /**
      * 상품권 발행.
      * 분산락을 트랜잭션 밖에서 잡아 락 해제 전 커밋을 보장한다.
      * (락 해제 ~ 커밋 사이 다른 스레드가 커밋 전 데이터를 읽는 문제 방지)
+     *
+     * 지역 월 발행한도 카운터는 DB 트랜잭션보다 먼저 Redis에서 원자 예약(INCRBY)되므로,
+     * 이후 트랜잭션이 롤백되면 보상되지 않은 채 카운터가 남아 과대집계(거짓 한도초과)를 유발한다.
+     * 따라서 예약 이후 실패하면 명시적으로 보상 DECRBY 하여 누수를 차단한다.
      */
     fun issue(memberId: Long, regionId: Long, faceValue: BigDecimal): Voucher {
         return lockManager.withMemberPurchaseLock(memberId) {
-            transactionTemplate.execute { _ ->
-                // DB 비관적 락(이중 방어): Redis 분산락 장애 시에도 동일 회원 구매를 직렬화한다.
-                memberRepository.findByIdForUpdate(memberId)
-                    ?: throw BusinessException(ErrorCode.ENTITY_NOT_FOUND)
+            var regionLimitReserved = false
+            try {
+                transactionTemplate.execute { _ ->
+                    // DB 비관적 락(이중 방어): Redis 분산락 장애 시에도 동일 회원 구매를 직렬화한다.
+                    memberRepository.findByIdForUpdate(memberId)
+                        ?: throw BusinessException(ErrorCode.ENTITY_NOT_FOUND)
 
-                val region = regionService.getById(regionId)
+                    val region = regionService.getById(regionId)
 
-                if (region.status != RegionStatus.ACTIVE)
-                    throw BusinessException(ErrorCode.REGION_NOT_ACTIVE)
+                    if (region.status != RegionStatus.ACTIVE)
+                        throw BusinessException(ErrorCode.REGION_NOT_ACTIVE)
 
-                // Check member purchase limit (DB 락 보유 상태에서 조회 → race condition 방지)
-                val totalPurchased = voucherRepository.sumFaceValueByMemberAndRegion(memberId, regionId)
-                if (totalPurchased + faceValue > region.policy.purchaseLimitPerPerson)
-                    throw BusinessException(ErrorCode.MEMBER_PURCHASE_LIMIT_EXCEEDED)
+                    // Check member purchase limit (DB 락 보유 상태에서 조회 → race condition 방지)
+                    val totalPurchased = voucherRepository.sumFaceValueByMemberAndRegion(memberId, regionId)
+                    if (totalPurchased + faceValue > region.policy.purchaseLimitPerPerson)
+                        throw BusinessException(ErrorCode.MEMBER_PURCHASE_LIMIT_EXCEEDED)
 
-                // Check region monthly limit (Redis Lua script — atomic)
-                checkRegionMonthlyLimit(regionId, faceValue, region.policy.monthlyIssuanceLimit)
+                    // Check region monthly limit (Redis Lua script — atomic). 성공 시 INCRBY가 적용됨.
+                    checkRegionMonthlyLimit(regionId, faceValue, region.policy.monthlyIssuanceLimit)
+                    regionLimitReserved = true // 이후 단계가 실패하면 보상 DECRBY 대상
 
-                // Generate voucher code
-                val code = codeGenerator.generate(region.regionCode)
+                    // Generate voucher code
+                    val code = codeGenerator.generate(region.regionCode)
 
-                // Create voucher (ACTIVE)
-                val voucher = voucherRepository.save(
-                    Voucher(
-                        voucherCode = code,
-                        faceValue = faceValue,
-                        balance = faceValue,
-                        memberId = memberId,
-                        regionId = regionId,
-                        purchasedAt = LocalDateTime.now(),
-                        expiresAt = LocalDateTime.now().plusMonths(6),
+                    // Create voucher (ACTIVE)
+                    val voucher = voucherRepository.save(
+                        Voucher(
+                            voucherCode = code,
+                            faceValue = faceValue,
+                            balance = faceValue,
+                            memberId = memberId,
+                            regionId = regionId,
+                            purchasedAt = LocalDateTime.now(),
+                            expiresAt = LocalDateTime.now().plusMonths(6),
+                        )
                     )
-                )
 
-                // Create transaction + ledger (synchronous, same DB tx)
-                val tx = transactionService.create(
-                    type = TransactionType.PURCHASE,
-                    amount = faceValue,
-                    voucherId = voucher.id,
-                    memberId = memberId,
-                )
-                ledgerService.record(
-                    debitAccount = AccountCode.VOUCHER_BALANCE,
-                    creditAccount = AccountCode.MEMBER_CASH,
-                    amount = faceValue,
-                    transactionId = tx.id,
-                    entryType = LedgerEntryType.PURCHASE,
-                )
-                tx.complete()
+                    // Create transaction + ledger (synchronous, same DB tx)
+                    val tx = transactionService.create(
+                        type = TransactionType.PURCHASE,
+                        amount = faceValue,
+                        voucherId = voucher.id,
+                        memberId = memberId,
+                    )
+                    ledgerService.record(
+                        debitAccount = AccountCode.VOUCHER_BALANCE,
+                        creditAccount = AccountCode.MEMBER_CASH,
+                        amount = faceValue,
+                        transactionId = tx.id,
+                        entryType = LedgerEntryType.PURCHASE,
+                    )
+                    tx.complete()
 
-                // Publish event (audit log)
-                eventPublisher.publishEvent(
-                    VoucherIssuedEvent(voucher.id, memberId, regionId, faceValue)
-                )
+                    // Publish event (audit log)
+                    eventPublisher.publishEvent(
+                        VoucherIssuedEvent(voucher.id, memberId, regionId, faceValue)
+                    )
 
-                voucher
-            }!!
+                    voucher
+                }!!
+            } catch (e: Throwable) {
+                // 트랜잭션 롤백 시 INCRBY는 자동 보상되지 않으므로 명시적으로 DECRBY 하여 카운터 누수 차단.
+                if (regionLimitReserved) compensateRegionMonthlyLimit(regionId, faceValue)
+                throw e
+            }
+        }
+    }
+
+    /** 예약 이후 실패 시 지역 월 발행한도 카운터를 원복(DECRBY)한다. */
+    private fun compensateRegionMonthlyLimit(regionId: Long, amount: BigDecimal) {
+        try {
+            val key = "region:monthly:$regionId:${YearMonth.now()}"
+            redissonClient.getAtomicLong(key).addAndGet(-amount.longValueExact())
+            log.info("Compensated region {} monthly counter by -{} after issuance failure", regionId, amount)
+        } catch (e: Exception) {
+            // 보상 실패는 매시 재동기화 잡이 상향 보정으로 수렴시키지 못할 수 있으므로 명확히 경고만 남긴다.
+            log.error("Failed to compensate region {} monthly counter: {}", regionId, e.message)
         }
     }
 

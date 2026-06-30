@@ -6,6 +6,8 @@ import com.commerce.member.application.MemberService
 import com.commerce.merchant.domain.Merchant
 import com.commerce.merchant.domain.MerchantCategory
 import com.commerce.merchant.domain.event.MerchantApprovedEvent
+import com.commerce.merchant.domain.event.MerchantRejectedEvent
+import com.commerce.merchant.domain.event.MerchantTerminatedEvent
 import com.commerce.merchant.infrastructure.MerchantJpaRepository
 import com.commerce.region.application.RegionService
 import org.springframework.context.ApplicationEventPublisher
@@ -58,6 +60,7 @@ class MerchantService(
     fun reject(merchantId: Long): Merchant {
         val merchant = getById(merchantId)
         merchant.reject()
+        eventPublisher.publishEvent(MerchantRejectedEvent(merchant.id, merchant.region.id))
         return merchant
     }
 
@@ -79,6 +82,7 @@ class MerchantService(
     fun terminate(merchantId: Long): Merchant {
         val merchant = getById(merchantId)
         merchant.terminate()
+        eventPublisher.publishEvent(MerchantTerminatedEvent(merchant.id, merchant.region.id))
         return merchant
     }
 
