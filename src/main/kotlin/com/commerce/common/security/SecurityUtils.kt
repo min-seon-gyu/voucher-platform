@@ -19,4 +19,9 @@ object SecurityUtils {
 
     fun currentMemberIdOrNull(): Long? =
         SecurityContextHolder.getContext().authentication?.principal as? Long
+
+    /** 현재 인증 주체가 ADMIN 역할을 보유하는지 여부(JwtAuthenticationFilter가 ROLE_<role> 권한으로 주입). */
+    fun isAdmin(): Boolean =
+        SecurityContextHolder.getContext().authentication
+            ?.authorities?.any { it.authority == "ROLE_ADMIN" } ?: false
 }

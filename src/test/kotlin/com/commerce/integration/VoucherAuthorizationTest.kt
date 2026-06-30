@@ -11,12 +11,13 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
 import java.math.BigDecimal
 
 /**
- * 상품권 자금 이동 엔드포인트의 인증/소유권 강제를 검증한다.
- * (이전: redeem/refund/withdraw가 permitAll이고 본문 memberId만 비교 → 무토큰 IDOR로 타인 잔액 탈취 가능)
+ * 상품권 자금 이동(redeem/refund/withdraw) 및 조회(list/detail)의 인증·소유권 강제를 검증한다.
+ * (이전: 변경 엔드포인트가 무인증 IDOR였고, 조회는 memberId+balance를 공개 노출)
  */
 @AutoConfigureMockMvc
 class VoucherAuthorizationTest : IntegrationTestSupport() {
@@ -29,6 +30,8 @@ class VoucherAuthorizationTest : IntegrationTestSupport() {
     private var voucherId: Long = 0
     private var ownerId: Long = 0
     private var merchantId: Long = 0
+    private var otherMemberId: Long = 0
+    private var otherVoucherId: Long = 0
 
     @BeforeEach
     fun setup() {
@@ -36,12 +39,18 @@ class VoucherAuthorizationTest : IntegrationTestSupport() {
         val owner = fixtures.createMember()
         val merchant = fixtures.createMerchant(region, fixtures.createMember())
         val voucher = fixtures.issueVoucher(owner.id, region.id, BigDecimal("50000"))
+        val otherMember = fixtures.createMember()
+        val otherVoucher = fixtures.issueVoucher(otherMember.id, region.id, BigDecimal("30000"))
         ownerId = owner.id
         merchantId = merchant.id
         voucherId = voucher.id
+        otherMemberId = otherMember.id
+        otherVoucherId = otherVoucher.id
     }
 
     private fun redeemBody() = """{"merchantId": $merchantId, "amount": 10000}"""
+
+    // ── 자금 이동: redeem / refund / withdraw ────────────────────────────────
 
     @Test
     fun `redeem without token returns 401`() {
@@ -54,15 +63,16 @@ class VoucherAuthorizationTest : IntegrationTestSupport() {
     }
 
     @Test
-    fun `redeem by non-owner returns 403 and does not debit balance`() {
-        val attackerToken = jwtTokenProvider.generateToken(ownerId + 99_999, "USER")
+    fun `redeem by non-owner returns 404 and does not debit balance`() {
+        // 존재성 오라클 차단: 타인 소유 바우처는 미존재와 동일하게 404로 수렴한다.
+        val attackerToken = jwtTokenProvider.generateToken(otherMemberId, "USER")
         mockMvc.post("/api/v1/vouchers/$voucherId/redeem") {
             header("Authorization", "Bearer $attackerToken")
             contentType = MediaType.APPLICATION_JSON
             content = redeemBody()
         }.andExpect {
-            status { isForbidden() }
-            jsonPath("$.error.code") { value("ACCESS_DENIED") }
+            status { isNotFound() }
+            jsonPath("$.error.code") { value("ENTITY_NOT_FOUND") }
         }
 
         voucherRepository.findById(voucherId).get().balance.compareTo(BigDecimal("50000")) shouldBe 0
@@ -90,5 +100,43 @@ class VoucherAuthorizationTest : IntegrationTestSupport() {
     fun `withdraw without token returns 401`() {
         mockMvc.post("/api/v1/vouchers/$voucherId/withdraw")
             .andExpect { status { isUnauthorized() } }
+    }
+
+    // ── 조회: list / detail (정보 노출 차단) ─────────────────────────────────
+
+    @Test
+    fun `voucher detail by non-owner returns 404 with no existence oracle`() {
+        // 미존재 id와 동일한 404 ENTITY_NOT_FOUND를 반환해 voucher id 열거를 차단한다.
+        val token = jwtTokenProvider.generateToken(otherMemberId, "USER")
+        mockMvc.get("/api/v1/vouchers/$voucherId") {
+            header("Authorization", "Bearer $token")
+        }.andExpect {
+            status { isNotFound() }
+            jsonPath("$.error.code") { value("ENTITY_NOT_FOUND") }
+        }
+    }
+
+    @Test
+    fun `voucher detail by owner returns 200`() {
+        val token = jwtTokenProvider.generateToken(ownerId, "USER")
+        mockMvc.get("/api/v1/vouchers/$voucherId") {
+            header("Authorization", "Bearer $token")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.data.id") { value(voucherId) }
+        }
+    }
+
+    @Test
+    fun `voucher list scopes to caller even when filtering another member`() {
+        val token = jwtTokenProvider.generateToken(ownerId, "USER")
+        // 비-ADMIN이 타인 memberId로 필터해도 자신의 바우처만 반환되어야 한다(정보 노출 차단).
+        mockMvc.get("/api/v1/vouchers?memberId=$otherMemberId") {
+            header("Authorization", "Bearer $token")
+        }.andExpect {
+            status { isOk() }
+            jsonPath("$.data.content.length()") { value(1) }
+            jsonPath("$.data.content[0].id") { value(voucherId) }
+        }
     }
 }
