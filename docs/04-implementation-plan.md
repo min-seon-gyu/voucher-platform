@@ -14,7 +14,7 @@
 - `docs/03-implementation-roadmap.md` — 태스크 개요 및 의존성 그래프
 
 **기본 경로:**
-- 프로젝트 루트: `C:\Users\seongyu\Desktop\study\project\komsco-practice`
+- 프로젝트 루트: `<project-root>`
 - 소스: `src/main/kotlin/com/commerce/`
 - 테스트: `src/test/kotlin/com/commerce/`
 - 리소스: `src/main/resources/`
@@ -278,12 +278,12 @@ abstract class IntegrationTestSupport {
 
 - [x] **Step 7: Verify project builds**
 
-Run: `cd /Users/seongyumin/Documents/study/komsco && ./gradlew build`
+Run: `cd <project-root> && ./gradlew build`
 Expected: BUILD SUCCESSFUL
 
 - [x] **Step 8: Verify Docker Compose starts**
 
-Run: `cd /Users/seongyumin/Documents/study/komsco && docker compose up -d && docker compose ps`
+Run: `cd <project-root> && docker compose up -d && docker compose ps`
 Expected: mysql and redis containers running
 
 - [x] **Step 9: Commit**

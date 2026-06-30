@@ -471,7 +471,7 @@ docker compose up -d
 ## 프로젝트 구조
 
 ```
-komsco/
+commerce-platform/
 ├── docs/
 │   ├── 01-domain-design.md           # 도메인 & 비즈니스 규칙 (엔티티, 상태머신, 불변식)
 │   ├── 02-architecture-decisions.md   # 아키텍처 설계 결정 (동시성, 이벤트, 감사, 모니터링)

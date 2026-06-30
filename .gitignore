@@ -12,6 +12,8 @@ src/main/generated/
 
 # SDD scratch (briefs, reports, ledger, diffs)
 .superpowers/
+# internal spec/plan scaffolding (kept locally, out of the public repo)
+docs/superpowers/
 
 # crash dumps
 *.stackdump
