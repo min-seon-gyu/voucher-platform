@@ -12,3 +12,6 @@ src/main/generated/
 
 # SDD scratch (briefs, reports, ledger, diffs)
 .superpowers/
+
+# crash dumps
+*.stackdump

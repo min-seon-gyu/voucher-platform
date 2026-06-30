@@ -1,0 +1,45 @@
+# 스케일 스터디용 관측 스택.
+# 앱은 호스트에서 bootRun(8080), MySQL/Redis 는 프로젝트 docker-compose(3306/6379)로 띄운 상태를 가정.
+# 컨테이너 → 호스트 접근은 host.docker.internal 사용 (Docker Desktop / Linux host-gateway 모두 대응).
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: vp-prometheus
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: vp-grafana
+    ports: ["3000:3000"]
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+
+  # ── (선택) DB/Redis exporter. 핵심 패널은 앱(Micrometer) 메트릭으로 동작하므로 없어도 됨 ──
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.14.0
+    container_name: vp-mysqld-exporter
+    ports: ["9104:9104"]
+    environment:
+      DATA_SOURCE_NAME: "root:root@(host.docker.internal:3306)/"
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.58.0
+    container_name: vp-redis-exporter
+    ports: ["9121:9121"]
+    command: ["--redis.addr=redis://host.docker.internal:6379"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: vp-node-exporter
+    ports: ["9100:9100"]

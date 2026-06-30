@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 5s        # 부하 스파이크 해상도. rate()는 [1m] 사용
+  evaluation_interval: 5s
+
+scrape_configs:
+  # 앱(Spring Boot Actuator/Micrometer) — 핵심 신호
+  - job_name: 'voucher-app'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+
+  # 선택: DB/Redis/Node exporter
+  - job_name: 'mysqld'
+    static_configs:
+      - targets: ['mysqld-exporter:9104']
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']

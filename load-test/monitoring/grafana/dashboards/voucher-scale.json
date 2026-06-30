@@ -1,0 +1,94 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "version": 1,
+  "title": "Voucher Scale Study",
+  "tags": ["voucher", "scale"],
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "HTTP RPS by status",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (status) (rate(http_server_requests_seconds_count{application=\"voucher-platform\"}[1m]))", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "HTTP latency (p95 / p99)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{application=\"voucher-platform\"}[1m])))", "legendFormat": "p95" },
+        { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{application=\"voucher-platform\"}[1m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "HikariCP connections (active / idle / pending / max)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "hikaricp_connections_active{application=\"voucher-platform\"}", "legendFormat": "active" },
+        { "refId": "B", "expr": "hikaricp_connections_idle{application=\"voucher-platform\"}", "legendFormat": "idle" },
+        { "refId": "C", "expr": "hikaricp_connections_pending{application=\"voucher-platform\"}", "legendFormat": "pending" },
+        { "refId": "D", "expr": "hikaricp_connections_max{application=\"voucher-platform\"}", "legendFormat": "max" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Redemption rate by result",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (result) (rate(voucher_redemption_count_total{application=\"voucher-platform\"}[1m]))", "legendFormat": "{{result}}" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Redisson lock wait p99 & timeout rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(lock_acquisition_duration_seconds_bucket{application=\"voucher-platform\"}[1m])))", "legendFormat": "lock wait p99 (s)" },
+        { "refId": "B", "expr": "sum(rate(lock_acquisition_timeout_total{application=\"voucher-platform\"}[1m]))", "legendFormat": "lock timeout /s" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "JVM heap used & GC pause",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(jvm_memory_used_bytes{application=\"voucher-platform\",area=\"heap\"})", "legendFormat": "heap used (bytes)" },
+        { "refId": "B", "expr": "sum(rate(jvm_gc_pause_seconds_sum{application=\"voucher-platform\"}[1m]))", "legendFormat": "gc pause /s" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "MySQL threads running & row lock waits  (mysqld-exporter)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "mysql_global_status_threads_running", "legendFormat": "threads running" },
+        { "refId": "B", "expr": "rate(mysql_global_status_innodb_row_lock_waits[1m])", "legendFormat": "row lock waits /s" }
+      ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Redis ops & blocked clients  (redis-exporter)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "rate(redis_commands_processed_total[1m])", "legendFormat": "ops/s" },
+        { "refId": "B", "expr": "redis_blocked_clients", "legendFormat": "blocked clients" }
+      ]
+    }
+  ]
+}
