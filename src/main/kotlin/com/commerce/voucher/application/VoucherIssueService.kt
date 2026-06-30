@@ -53,6 +53,9 @@ class VoucherIssueService(
      */
     fun issue(memberId: Long, regionId: Long, faceValue: BigDecimal): Voucher {
         return lockManager.withMemberPurchaseLock(memberId) {
+            // 예약/보상 키는 같은 달로 고정한다(월 경계 트랜잭션이 다른 달 카운터를 건드리지 않도록).
+            val reservedMonth = YearMonth.now()
+            val counterKey = regionMonthlyKey(regionId, reservedMonth)
             var regionLimitReserved = false
             try {
                 transactionTemplate.execute { _ ->
@@ -70,9 +73,11 @@ class VoucherIssueService(
                     if (totalPurchased + faceValue > region.policy.purchaseLimitPerPerson)
                         throw BusinessException(ErrorCode.MEMBER_PURCHASE_LIMIT_EXCEEDED)
 
-                    // Check region monthly limit (Redis Lua script — atomic). 성공 시 INCRBY가 적용됨.
-                    checkRegionMonthlyLimit(regionId, faceValue, region.policy.monthlyIssuanceLimit)
-                    regionLimitReserved = true // 이후 단계가 실패하면 보상 DECRBY 대상
+                    // 지역 월 한도 원자 예약(INCRBY + 한도 검증). 정상 반환 = 예약 성공 → 즉시 보상 대상으로 표시.
+                    reserveRegionMonthlyLimit(counterKey, faceValue, region.policy.monthlyIssuanceLimit)
+                    regionLimitReserved = true
+                    // TTL은 best-effort: 실패해도 예약 추적엔 영향 없음(이미 reserved 표시됨).
+                    ensureRegionCounterTtl(counterKey, reservedMonth)
 
                     // Generate voucher code
                     val code = codeGenerator.generate(region.regionCode)
@@ -115,31 +120,24 @@ class VoucherIssueService(
                 }!!
             } catch (e: Throwable) {
                 // 트랜잭션 롤백 시 INCRBY는 자동 보상되지 않으므로 명시적으로 DECRBY 하여 카운터 누수 차단.
-                if (regionLimitReserved) compensateRegionMonthlyLimit(regionId, faceValue)
+                // 예약 시점에 고정한 counterKey를 사용해 월 경계에서도 같은 달 카운터를 보상한다.
+                if (regionLimitReserved) compensateRegionMonthlyLimit(counterKey, faceValue)
                 throw e
             }
         }
     }
 
-    /** 예약 이후 실패 시 지역 월 발행한도 카운터를 원복(DECRBY)한다. */
-    private fun compensateRegionMonthlyLimit(regionId: Long, amount: BigDecimal) {
-        try {
-            val key = "region:monthly:$regionId:${YearMonth.now()}"
-            redissonClient.getAtomicLong(key).addAndGet(-amount.longValueExact())
-            log.info("Compensated region {} monthly counter by -{} after issuance failure", regionId, amount)
-        } catch (e: Exception) {
-            // 보상 실패는 매시 재동기화 잡이 상향 보정으로 수렴시키지 못할 수 있으므로 명확히 경고만 남긴다.
-            log.error("Failed to compensate region {} monthly counter: {}", regionId, e.message)
-        }
-    }
+    private fun regionMonthlyKey(regionId: Long, month: YearMonth): String = "region:monthly:$regionId:$month"
 
-    private fun checkRegionMonthlyLimit(regionId: Long, amount: BigDecimal, limit: BigDecimal) {
-        val key = "region:monthly:$regionId:${YearMonth.now()}"
+    /**
+     * 지역 월 발행한도를 Redis Lua로 원자 예약한다(INCRBY + 한도 검증). 한도 초과 시 -1 반환 → 예외.
+     * 정상 반환되면 INCRBY가 확정 적용된 상태이며, 이 메서드는 그 외 부수효과(TTL 등)를 하지 않는다.
+     * (TTL을 분리해, 예약 성공과 보상 플래그 설정 사이에 예외 가능 지점이 없도록 한다.)
+     */
+    private fun reserveRegionMonthlyLimit(key: String, amount: BigDecimal, limit: BigDecimal) {
         val amountLong = amount.longValueExact()
         val limitLong = limit.longValueExact()
 
-        // Lua 스크립트로 INCRBY + 한도 검증을 원자적으로 수행
-        // 한도 초과 시 자동 롤백 후 -1 반환, 성공 시 새 합계 반환
         // StringCodec: ARGV를 평문 문자열로 인코딩해야 Redis INCRBY가 정수로 해석 가능
         // (기본 바이너리 코덱은 Long을 바이너리로 직렬화해 "value is not an integer" 유발)
         val result = redissonClient.getScript(StringCodec.INSTANCE).eval<Long>(
@@ -153,12 +151,30 @@ class VoucherIssueService(
         if (result == -1L) {
             throw BusinessException(ErrorCode.REGION_MONTHLY_LIMIT_EXCEEDED)
         }
+    }
 
-        // TTL이 설정되지 않은 경우 월말 + 1일로 설정
-        val counter = redissonClient.getAtomicLong(key)
-        if (counter.remainTimeToLive() == -1L) {
-            val endOfMonth = YearMonth.now().atEndOfMonth().plusDays(1)
-            counter.expire(Duration.between(LocalDateTime.now(), endOfMonth.atStartOfDay()))
+    /** 카운터에 TTL이 없으면 해당 월말 + 1일로 설정한다(best-effort — 실패해도 예약/보상에 영향 없음). */
+    private fun ensureRegionCounterTtl(key: String, month: YearMonth) {
+        try {
+            val counter = redissonClient.getAtomicLong(key)
+            if (counter.remainTimeToLive() == -1L) {
+                val expireAt = month.atEndOfMonth().plusDays(1).atStartOfDay()
+                val ttl = Duration.between(LocalDateTime.now(), expireAt)
+                if (!ttl.isNegative && !ttl.isZero) counter.expire(ttl)
+            }
+        } catch (e: Exception) {
+            log.warn("Failed to set TTL on region counter {}: {}", key, e.message)
+        }
+    }
+
+    /** 예약 이후 실패 시 지역 월 발행한도 카운터를 원복(DECRBY)한다(예약 시점 키 재사용). */
+    private fun compensateRegionMonthlyLimit(key: String, amount: BigDecimal) {
+        try {
+            redissonClient.getAtomicLong(key).addAndGet(-amount.longValueExact())
+            log.info("Compensated region counter {} by -{} after issuance failure", key, amount)
+        } catch (e: Exception) {
+            // 보상 실패는 매시 재동기화 잡이 상향 보정으로 수렴시키지 못할 수 있으므로 명확히 경고만 남긴다.
+            log.error("Failed to compensate region counter {}: {}", key, e.message)
         }
     }
 

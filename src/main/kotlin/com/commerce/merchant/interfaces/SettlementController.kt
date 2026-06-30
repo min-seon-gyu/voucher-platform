@@ -1,6 +1,8 @@
 package com.commerce.merchant.interfaces
 
 import com.commerce.common.api.ApiResponse
+import com.commerce.common.exception.BusinessException
+import com.commerce.common.exception.ErrorCode
 import com.commerce.merchant.application.SettlementService
 import com.commerce.merchant.domain.Settlement
 import org.springframework.format.annotation.DateTimeFormat
@@ -59,6 +61,9 @@ class SettlementController(
     @PostMapping("/calculate")
     @ResponseStatus(HttpStatus.CREATED)
     fun calculate(@RequestBody request: CalculateSettlementRequest): ApiResponse<SettlementResponse> {
+        // periodStart/periodEnd는 둘 다 지정하거나 둘 다 비워야 한다(부분 지정 시 조용한 폴백 방지).
+        if ((request.periodStart == null) != (request.periodEnd == null))
+            throw BusinessException(ErrorCode.INVALID_INPUT, "periodStart와 periodEnd는 함께 지정해야 합니다")
         val settlement = if (request.periodStart != null && request.periodEnd != null) {
             settlementService.calculate(request.merchantId, request.periodStart, request.periodEnd)
         } else if (request.referenceDate != null) {

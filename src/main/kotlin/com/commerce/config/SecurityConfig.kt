@@ -51,9 +51,19 @@ class SecurityConfig(
 
                 // ── 인증 필요(역할 무관) ─────────────────────────────────────────────
                 it.requestMatchers("/api/v1/me").authenticated()
+                // 상품권 자금 이동 엔드포인트: 인증 필수 + 컨트롤러에서 JWT 주체로 소유권 검증.
+                it.requestMatchers(
+                    HttpMethod.POST,
+                    "/api/v1/vouchers/purchase", "/api/v1/vouchers/*/redeem",
+                    "/api/v1/vouchers/*/refund", "/api/v1/vouchers/*/withdraw",
+                ).authenticated()
+                // 상품권 조회: 인증 필수 + 컨트롤러에서 본인 자원으로 스코프(ADMIN은 전체 조회).
+                it.requestMatchers(
+                    HttpMethod.GET, "/api/v1/vouchers", "/api/v1/vouchers/*",
+                ).authenticated()
 
-                // 그 외(상품권 구매/결제/환불/철회·조회, 가맹점 등록/조회, 회원 조회,
-                //  프로모션/포인트/쿠폰)는 컨트롤러 레벨 SecurityUtils가 본인 자원 인가를 강제.
+                // 그 외(가맹점 등록/조회, 회원 조회, 지자체 조회, 프로모션/포인트/쿠폰)는
+                // 공개이거나 컨트롤러 레벨 SecurityUtils가 본인 자원 인가를 강제한다.
                 it.anyRequest().permitAll()
             }
             // 미인증 접근 시 403 대신 401 반환.

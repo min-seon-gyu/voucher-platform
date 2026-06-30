@@ -4,6 +4,7 @@ import com.commerce.common.api.ApiResponse
 import com.commerce.common.exception.BusinessException
 import com.commerce.common.exception.ErrorCode
 import com.commerce.common.idempotency.Idempotent
+import com.commerce.common.security.SecurityUtils
 import com.commerce.voucher.application.VoucherIssueService
 import com.commerce.voucher.application.VoucherRefundService
 import com.commerce.voucher.application.VoucherWithdrawalService
@@ -35,39 +36,54 @@ class VoucherController(
         @RequestParam(required = false) regionId: Long?,
         @RequestParam(required = false) status: VoucherStatus?,
         @PageableDefault(size = 20) pageable: Pageable,
-    ): ApiResponse<Page<VoucherResponse>> =
-        ApiResponse.ok(
-            voucherQueryRepository.findByConditions(memberId, regionId, status, pageable)
+    ): ApiResponse<Page<VoucherResponse>> {
+        // 본인 자원 스코프: 일반 회원은 자신의 바우처만 조회한다. ADMIN만 임의 memberId 필터를 허용한다.
+        val effectiveMemberId = if (SecurityUtils.isAdmin()) memberId else SecurityUtils.currentMemberId()
+        return ApiResponse.ok(
+            voucherQueryRepository.findByConditions(effectiveMemberId, regionId, status, pageable)
                 .map { VoucherResponse.from(it) }
         )
+    }
 
     @GetMapping("/{id}")
-    fun getById(@PathVariable id: Long): ApiResponse<VoucherResponse> =
-        ApiResponse.ok(
-            VoucherResponse.from(
-                voucherJpaRepository.findById(id)
-                    .orElseThrow { BusinessException(ErrorCode.ENTITY_NOT_FOUND) }
-            )
-        )
+    fun getById(@PathVariable id: Long): ApiResponse<VoucherResponse> {
+        val voucher = voucherJpaRepository.findById(id).orElse(null)
+        // 존재성 오라클 차단: 없는 id와 타인 소유 id를 모두 404로 수렴한다(ADMIN은 전체 조회 가능).
+        if (voucher == null || (!SecurityUtils.isAdmin() && voucher.memberId != SecurityUtils.currentMemberId()))
+            throw BusinessException(ErrorCode.ENTITY_NOT_FOUND)
+        return ApiResponse.ok(VoucherResponse.from(voucher))
+    }
 
     @PostMapping("/purchase")
     @ResponseStatus(HttpStatus.CREATED)
     @Idempotent
     fun purchase(@Valid @RequestBody request: PurchaseVoucherRequest): ApiResponse<VoucherResponse> =
-        ApiResponse.ok(VoucherResponse.from(issueService.issue(request.memberId, request.regionId, request.faceValue)))
+        ApiResponse.ok(VoucherResponse.from(issueService.issue(SecurityUtils.currentMemberId(), request.regionId, request.faceValue)))
 
     @PostMapping("/{id}/redeem")
     @Idempotent
-    fun redeem(@PathVariable id: Long, @Valid @RequestBody request: RedeemRequest): ApiResponse<RedemptionResult> =
-        ApiResponse.ok(redemptionOrchestrator.redeem(id, request.merchantId, request.amount, request.couponId))
+    fun redeem(@PathVariable id: Long, @Valid @RequestBody request: RedeemRequest): ApiResponse<RedemptionResult> {
+        requireOwnership(id) // 결제 서비스는 소유권을 검증하지 않으므로 컨트롤러에서 강제(IDOR 차단)
+        return ApiResponse.ok(redemptionOrchestrator.redeem(id, request.merchantId, request.amount, request.couponId))
+    }
 
     @PostMapping("/{id}/refund")
     @Idempotent
-    fun refund(@PathVariable id: Long, @RequestBody request: RefundRequest): ApiResponse<VoucherResponse> =
-        ApiResponse.ok(VoucherResponse.from(refundService.refund(id, request.memberId)))
+    fun refund(@PathVariable id: Long): ApiResponse<VoucherResponse> =
+        ApiResponse.ok(VoucherResponse.from(refundService.refund(id, SecurityUtils.currentMemberId())))
 
     @PostMapping("/{id}/withdraw")
     @Idempotent
-    fun withdraw(@PathVariable id: Long, @RequestBody request: WithdrawRequest): ApiResponse<VoucherResponse> =
-        ApiResponse.ok(VoucherResponse.from(withdrawalService.withdraw(id, request.memberId)))
+    fun withdraw(@PathVariable id: Long): ApiResponse<VoucherResponse> =
+        ApiResponse.ok(VoucherResponse.from(withdrawalService.withdraw(id, SecurityUtils.currentMemberId())))
+
+    /**
+     * 인증 주체가 해당 바우처 소유자인지 검증한다(본문 식별자 불신).
+     * 존재성 오라클 차단을 위해 미존재·타인 소유를 모두 404 ENTITY_NOT_FOUND로 수렴한다.
+     */
+    private fun requireOwnership(voucherId: Long) {
+        val voucher = voucherJpaRepository.findById(voucherId).orElse(null)
+        if (voucher == null || voucher.memberId != SecurityUtils.currentMemberId())
+            throw BusinessException(ErrorCode.ENTITY_NOT_FOUND)
+    }
 }
