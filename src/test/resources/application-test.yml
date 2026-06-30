@@ -5,3 +5,12 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
+  kafka:
+    # 미사용(audit.kafka.enabled=false). 파이프라인 테스트는 @EmbeddedKafka로 오버라이드한다.
+    bootstrap-servers: localhost:9092
+
+audit:
+  kafka:
+    enabled: false          # 테스트 기본: 브로커 없이 DirectOutboxRelay 사용
+  outbox:
+    poll-ms: 600000         # 백그라운드 폴링 사실상 비활성 → 테스트는 relayOnce()를 수동 호출

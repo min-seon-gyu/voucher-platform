@@ -1,7 +1,9 @@
 package com.commerce.integration
 
+import com.commerce.common.audit.AuditLog
 import com.commerce.common.audit.AuditLogRepository
 import com.commerce.common.audit.AuditSeverity
+import com.commerce.common.audit.DirectOutboxRelay
 import com.commerce.member.application.MemberService
 import com.commerce.merchant.application.MerchantService
 import com.commerce.merchant.application.RegisterMerchantRequest
@@ -27,10 +29,14 @@ class AuditEventEmissionTest : IntegrationTestSupport() {
     @Autowired lateinit var memberService: MemberService
     @Autowired lateinit var regionService: RegionService
     @Autowired lateinit var auditLogRepository: AuditLogRepository
+    @Autowired lateinit var directRelay: DirectOutboxRelay
 
-    private fun auditOf(aggregateType: String, aggregateId: Long, eventType: String) =
-        auditLogRepository.findByAggregateTypeAndAggregateId(aggregateType, aggregateId)
+    // 비핵심(HIGH) 감사는 outbox → relay로 비동기 적용된다. 테스트(Kafka 비활성)에선 직접 relay를 수동 flush 후 조회.
+    private fun auditOf(aggregateType: String, aggregateId: Long, eventType: String): AuditLog? {
+        directRelay.relayOnce()
+        return auditLogRepository.findByAggregateTypeAndAggregateId(aggregateType, aggregateId)
             .find { it.eventType == eventType }
+    }
 
     @Test
     fun `merchant rejection emits HIGH audit log`() {

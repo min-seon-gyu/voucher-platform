@@ -2,7 +2,7 @@ package com.commerce.common.audit
 
 /**
  * 이벤트 타입 → 감사 등급/액션 매핑의 단일 출처.
- * AuditEventListener(최초 기록)와 FailedEventRetryScheduler(실패 재처리)가 공유하여
+ * AuditEventListener(CRITICAL 동기 기록)와 OutboxRecorder/relay(비핵심 비동기 적용)가 공유하여
  * 등급 분류가 두 경로에서 어긋나지 않도록 한다.
  */
 object AuditEventTypePolicy {
@@ -13,7 +13,7 @@ object AuditEventTypePolicy {
         "VOUCHER_WITHDRAWN", "TRANSACTION_CANCELLED", "MANUAL_ADJUSTMENT",
     )
 
-    /** AFTER_COMMIT + REQUIRES_NEW — 실패 시 FailedEvent로 적재 후 재처리 */
+    /** outbox 캡처 → relay(Kafka/직접) 비동기 적용 */
     val HIGH_EVENTS = setOf(
         "MERCHANT_APPROVED", "MERCHANT_REJECTED", "MERCHANT_TERMINATED",
         "MEMBER_SUSPENDED", "MEMBER_WITHDRAWN", "REGION_POLICY_CHANGED",

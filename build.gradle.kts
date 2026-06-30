@@ -40,6 +40,9 @@ dependencies {
     // Redisson
     implementation("org.redisson:redisson-spring-boot-starter:3.27.2")
 
+    // Kafka (감사 이벤트 Transactional Outbox 전달)
+    implementation("org.springframework.kafka:spring-kafka")
+
     // JWT
     implementation("io.jsonwebtoken:jjwt-api:0.12.5")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.5")
@@ -68,6 +71,7 @@ dependencies {
     testImplementation("org.testcontainers:mysql:1.19.7")
     testImplementation("org.testcontainers:junit-jupiter:1.19.7")
     testImplementation("io.mockk:mockk:1.13.10")
+    testImplementation("org.springframework.kafka:spring-kafka-test")
 }
 
 allOpen {
@@ -85,4 +89,8 @@ tasks.withType<KotlinCompile> {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // 메모리/시간 제약 환경에서 EmbeddedKafka 통합 테스트를 분리 실행하기 위한 옵션(-PnoKafka).
+    if (project.hasProperty("noKafka")) {
+        exclude("**/AuditKafkaPipelineTest.class", "**/AuditKafkaDltTest.class")
+    }
 }

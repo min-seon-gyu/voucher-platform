@@ -19,6 +19,24 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        max.block.ms: 5000          # 브로커 미가용 시 빠르게 실패 — 블로킹 send가 스케줄러 스레드를 장기 점유하지 않도록
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
+  task:
+    scheduling:
+      # outbox relay의 블로킹 send가 다른 @Scheduled(만료 배치·원장 정합성 검증 등)를 기아시키지 않도록 풀 확대.
+      pool:
+        size: 5
 
 point:
   earn-rate: "0.01"
@@ -45,3 +63,12 @@ management:
         voucher.redemption.duration: true
       slo:
         http.server.requests: 10ms,50ms,100ms,200ms,500ms,1s,2s
+
+# 감사 이벤트 Transactional Outbox 전달
+audit:
+  kafka:
+    enabled: ${AUDIT_KAFKA_ENABLED:true}   # false면 브로커 없이 직접 relay(로컬/CI 기본 대안)
+    topic: audit-events
+    group: audit-log-writers
+  outbox:
+    poll-ms: 1000
