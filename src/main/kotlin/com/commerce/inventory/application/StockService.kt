@@ -7,6 +7,7 @@ import com.commerce.inventory.infrastructure.StockJpaRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 
@@ -70,6 +71,26 @@ class StockService(
             stock.adjustTo(newQuantity)
             stock.quantity
         }!!
+    }
+
+    /**
+     * 호출자 트랜잭션 내에서 재고를 차감한다(주문 결제처럼 재고+주문+원장을 원자 처리할 때).
+     * 분산락은 호출자(OrderService)가 [StockLockManager.withStockLocks]로 관리한다.
+     * MANDATORY: 반드시 기존 트랜잭션 안에서 호출되어야 한다(단독 커밋 방지).
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun deductWithinTx(skuId: Long, quantity: Int) {
+        val stock = stockRepository.findBySkuIdForUpdate(skuId)
+            ?: throw BusinessException(ErrorCode.ENTITY_NOT_FOUND)
+        stock.deduct(quantity)
+    }
+
+    /** 호출자 트랜잭션 내에서 재고 복원(주문 취소). */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun restoreWithinTx(skuId: Long, quantity: Int) {
+        val stock = stockRepository.findBySkuIdForUpdate(skuId)
+            ?: throw BusinessException(ErrorCode.ENTITY_NOT_FOUND)
+        stock.restore(quantity)
     }
 
     @Transactional(readOnly = true)

@@ -5,6 +5,9 @@ enum class LedgerEntryType {
     // 커머스 확장 (스펙 §3.2)
     COUPON_SUBSIDY, // 쿠폰 보조 분개 (DEBIT MERCHANT_RECEIVABLE / CREDIT PROMOTION_FUNDING)
     POINT_EARN,     // 포인트 적립 분개 (DEBIT POINT_BALANCE / CREDIT POINT_FUNDING)
+    // 커머스 주문(오늘의집형)
+    ORDER_PAYMENT,  // 주문 결제 분개 (DEBIT CUSTOMER_CASH / CREDIT SELLER_PAYABLE)
+    ORDER_CANCEL,   // 주문 취소 역분개 (DEBIT SELLER_PAYABLE / CREDIT CUSTOMER_CASH)
 }
 
 enum class LedgerEntrySide {
