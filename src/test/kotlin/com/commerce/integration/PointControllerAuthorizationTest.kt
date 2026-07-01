@@ -3,7 +3,6 @@ package com.commerce.integration
 import com.commerce.config.JwtTokenProvider
 import com.commerce.support.IntegrationTestSupport
 import com.commerce.support.TestFixtures
-import com.commerce.voucher.application.VoucherRedemptionService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
@@ -17,7 +16,6 @@ class PointControllerAuthorizationTest : IntegrationTestSupport() {
     @Autowired lateinit var mockMvc: MockMvc
     @Autowired lateinit var jwtTokenProvider: JwtTokenProvider
     @Autowired lateinit var fixtures: TestFixtures
-    @Autowired lateinit var redemptionService: VoucherRedemptionService
 
     // ── Fix 1: cross-member guard ────────────────────────────────────────────
 
@@ -51,9 +49,8 @@ class PointControllerAuthorizationTest : IntegrationTestSupport() {
         val owner = fixtures.createMember()
         val seller = fixtures.createSeller(region, owner)
         val member = fixtures.createMember()
-        // Redeem full face value: 50000 * 1% earn-rate = 500 points
-        val voucher = fixtures.issueVoucher(member.id, region.id, BigDecimal("50000"))
-        redemptionService.redeem(voucher.id, seller.id, BigDecimal("50000"))
+        // 주문 결제 50,000 × 1% 적립 = 500 포인트 (원장 POINT 2-leg 원자 기록)
+        fixtures.sellerSale(member.id, seller.id, BigDecimal("50000"))
 
         val token = jwtTokenProvider.generateToken(member.id, "USER")
 

@@ -26,13 +26,6 @@ enum class ErrorCode(
     SELLER_NOT_APPROVED(HttpStatus.BAD_REQUEST, "승인된 판매자이 아닙니다"),
     INVALID_STATE_TRANSITION(HttpStatus.BAD_REQUEST, "허용되지 않은 상태 전이입니다"),
 
-    // Voucher
-    VOUCHER_NOT_USABLE(HttpStatus.BAD_REQUEST, "사용할 수 없는 상품권입니다"),
-    VOUCHER_EXPIRED(HttpStatus.BAD_REQUEST, "만료된 상품권입니다"),
-    INSUFFICIENT_BALANCE(HttpStatus.BAD_REQUEST, "잔액이 부족합니다"),
-    REFUND_CONDITION_NOT_MET(HttpStatus.BAD_REQUEST, "환불 조건을 충족하지 않습니다 (60% 이상 사용 필요)"),
-    WITHDRAWAL_PERIOD_EXPIRED(HttpStatus.BAD_REQUEST, "청약철회 기간이 만료되었습니다 (구매 후 7일 이내)"),
-    WITHDRAWAL_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "사용된 상품권은 청약철회할 수 없습니다"),
 
     // Transaction
     TRANSACTION_NOT_CANCELLABLE(HttpStatus.BAD_REQUEST, "취소할 수 없는 거래입니다"),
