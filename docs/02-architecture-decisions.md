@@ -1,5 +1,8 @@
 # 2단계 — 아키텍처 및 설계 결정
 
+> ⚠️ **커머스 전환(pivot) 진행 중** — 이 문서는 지역상품권 시절 기준이 상당수 남아 있다.
+> 최신 도메인/아키텍처(`seller · product · inventory · cart · order` 중심) 및 주문 결제/취소·정산 재배선은 [`../README.md`](../README.md)를 우선 참조하라. 상세 재작성은 pivot 완료(Phase 4c) 후 진행한다.
+
 > 모듈러 모놀리스 + 헥사고날 레이어링(`domain` / `application` / `infrastructure` / `interfaces`).
 > 커머스 플랫폼으로 병합된 현재 코드베이스 기준(상품권 + 프로모션/쿠폰 + 포인트). 패키지 루트는 `com.commerce`.
 > 도메인 규칙은 [`01-domain-design.md`](01-domain-design.md), 금융/회계 설계는 [`03-financial-design.md`](03-financial-design.md) 참조.

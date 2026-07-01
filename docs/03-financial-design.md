@@ -1,5 +1,9 @@
 # 03. 금융·회계 설계 (Financial & Accounting Design)
 
+> ⚠️ **커머스 전환(pivot) 진행 중** — 주문 결제 분개는 신규 계정 `CUSTOMER_CASH / SELLER_PAYABLE`로,
+> 판매자 정산은 OrderLine 합산으로 재배선됐다(README 참조). voucher 기준 분개 서술은 제거 예정이며,
+> 이 문서 상세 재작성은 pivot 완료(Phase 4c) 후 진행한다. **현행 자금 흐름은 [`../README.md`](../README.md) 우선.**
+
 > 커머스 결제·프로모션 백엔드의 **자금 정합성 설계 단일 레퍼런스**.
 > 복식부기 원장, 계정과목, 연산별 분개, 보상 트랜잭션, 정합성 검증을 다룬다.
 > 모든 분개는 `com.commerce.ledger / .promotion / .point / .transaction` 실제 코드에 대조해 검증했다.

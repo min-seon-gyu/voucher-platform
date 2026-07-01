@@ -1,5 +1,9 @@
 # 1단계 — 도메인 및 비즈니스 규칙
 
+> ⚠️ **커머스 전환(pivot) 진행 중** — 이 문서는 지역상품권(voucher/region) 시절 설계 기준이다.
+> 최신 도메인/아키텍처는 `seller · product · inventory · cart · order` 중심으로 재편됐다.
+> **현행 도메인 목록·역할·흐름은 [`../README.md`](../README.md)를 우선 참조**하라. voucher/region/audit 상세는 제거 예정이며, 이 문서 상세 재작성은 pivot 완료(Phase 4c) 후 진행한다.
+
 ## 설계 결정 요약
 
 | 항목 | 결정 |
