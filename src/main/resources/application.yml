@@ -19,6 +19,11 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
+  batch:
+    job:
+      enabled: false            # 起動 시 자동 실행 방지 — 엔드포인트/스케줄러로만 트리거
+    jdbc:
+      initialize-schema: never  # Flyway(V8)가 배치 메타 스키마의 단일 진실의 원천
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
@@ -40,6 +45,12 @@ spring:
 
 point:
   earn-rate: "0.01"
+
+# 결산 주기 일괄 정산 배치
+settlement:
+  batch:
+    scheduled:
+      enabled: true             # 매일 03:00 KST 전일 결산 자동 실행(스케줄러)
 
 server:
   port: 8080
