@@ -4,7 +4,6 @@ import com.commerce.ledger.application.LedgerVerificationService
 import com.commerce.point.infrastructure.PointAccountJpaRepository
 import com.commerce.support.IntegrationTestSupport
 import com.commerce.support.TestFixtures
-import com.commerce.voucher.application.VoucherRedemptionService
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -17,7 +16,6 @@ import java.util.UUID
 class PointReconciliationTest : IntegrationTestSupport() {
 
     @Autowired lateinit var fixtures: TestFixtures
-    @Autowired lateinit var redemptionService: VoucherRedemptionService
     @Autowired lateinit var pointAccountRepository: PointAccountJpaRepository
     @Autowired lateinit var verificationService: LedgerVerificationService
     @Autowired lateinit var transactionTemplate: TransactionTemplate
@@ -55,8 +53,7 @@ class PointReconciliationTest : IntegrationTestSupport() {
 
     @Test
     fun `point invariant holds after earn and breaks when the cache is corrupted`() {
-        val voucher = fixtures.issueVoucher(memberId, regionId, BigDecimal("50000"))
-        redemptionService.redeem(voucher.id, sellerId, BigDecimal("20000")) // +200 points
+        fixtures.sellerSale(memberId, sellerId, BigDecimal("20000")) // +200 points
 
         val ok = verificationService.verify()
         ok.pointBalanceMatches shouldBe true

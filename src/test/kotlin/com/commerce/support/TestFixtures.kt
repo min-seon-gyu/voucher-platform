@@ -22,9 +22,6 @@ import com.commerce.promotion.interfaces.dto.CreatePromotionRequest
 import com.commerce.region.application.RegionService
 import com.commerce.region.domain.Region
 import com.commerce.region.interfaces.dto.CreateRegionRequest
-import com.commerce.voucher.application.VoucherIssueService
-import com.commerce.voucher.domain.Voucher
-import com.commerce.voucher.infrastructure.VoucherJpaRepository
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -36,8 +33,6 @@ class TestFixtures(
     private val memberService: MemberService,
     private val sellerService: SellerService,
     private val sellerRepository: SellerJpaRepository,
-    private val voucherIssueService: VoucherIssueService,
-    private val voucherJpaRepository: VoucherJpaRepository,
     private val promotionService: PromotionService,
     private val couponIssueService: CouponIssueService,
     private val productService: ProductService,
@@ -107,14 +102,6 @@ class TestFixtures(
         return sellerService.approve(seller.id)
     }
 
-    fun issueVoucher(
-        memberId: Long,
-        regionId: Long,
-        faceValue: BigDecimal = BigDecimal("50000"),
-    ): Voucher {
-        return voucherIssueService.issue(memberId, regionId, faceValue)
-    }
-
     fun createPromotion(
         discountType: DiscountType = DiscountType.FIXED,
         discountValue: BigDecimal = BigDecimal("3000"),
@@ -136,16 +123,6 @@ class TestFixtures(
 
     fun issueCoupon(promotionId: Long, memberId: Long): Coupon =
         couponIssueService.issue(promotionId, memberId)
-
-    @Transactional
-    fun forceExpireVoucher(voucherId: Long) {
-        voucherJpaRepository.updateExpiresAt(voucherId, LocalDateTime.now().minusDays(1))
-    }
-
-    @Transactional
-    fun forcePurchasedAt(voucherId: Long, purchasedAt: LocalDateTime) {
-        voucherJpaRepository.updatePurchasedAt(voucherId, purchasedAt)
-    }
 
     /** 판매 중인 SKU(가격=price, 재고=stock)를 만들고 SKU id 반환. */
     @Transactional

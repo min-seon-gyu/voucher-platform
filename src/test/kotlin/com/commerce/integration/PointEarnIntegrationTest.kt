@@ -9,7 +9,6 @@ import com.commerce.point.infrastructure.PointAccountJpaRepository
 import com.commerce.point.infrastructure.PointTransactionJpaRepository
 import com.commerce.support.IntegrationTestSupport
 import com.commerce.support.TestFixtures
-import com.commerce.voucher.application.VoucherRedemptionService
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.BeforeEach
@@ -21,13 +20,11 @@ import java.util.UUID
 class PointEarnIntegrationTest : IntegrationTestSupport() {
 
     @Autowired lateinit var fixtures: TestFixtures
-    @Autowired lateinit var redemptionService: VoucherRedemptionService
     @Autowired lateinit var pointAccountRepository: PointAccountJpaRepository
     @Autowired lateinit var pointTransactionRepository: PointTransactionJpaRepository
     @Autowired lateinit var ledgerRepository: LedgerJpaRepository
     @Autowired lateinit var verificationService: LedgerVerificationService
 
-    private var regionId: Long = 0
     private var memberId: Long = 0
     private var sellerId: Long = 0
 
@@ -37,31 +34,29 @@ class PointEarnIntegrationTest : IntegrationTestSupport() {
         val member = fixtures.createMember()
         val owner = fixtures.createMember()
         val seller = fixtures.createSeller(region, owner)
-        regionId = region.id
         memberId = member.id
         sellerId = seller.id
     }
 
     @Test
-    fun `plain redeem earns 1 percent points and posts a balanced POINT_EARN ledger pair`() {
-        val voucher = fixtures.issueVoucher(memberId, regionId, BigDecimal("50000"))
-
-        // 20,000원 결제 → 1% 적립 = 200원
-        val result = redemptionService.redeem(voucher.id, sellerId, BigDecimal("20000"))
+    fun `order payment earns 1 percent points and posts a balanced POINT_EARN ledger pair`() {
+        // 20,000원 주문 결제 → 1% 적립 = 200원
+        val order = fixtures.sellerSale(memberId, sellerId, BigDecimal("20000"))
+        val paymentTxId = order.paymentTransactionId!!
 
         // 1) 포인트 계좌 잔액 = 200원
         val account = pointAccountRepository.findByMemberId(memberId)
         account.shouldNotBeNull()
         account.balance.compareTo(BigDecimal("200")) shouldBe 0
 
-        // 2) EARN 거래 1건, 원 거래 txId에 연결
-        val pointTxs = pointTransactionRepository.findBySourceTransactionId(result.transactionId)
+        // 2) EARN 거래 1건, 결제 txId에 연결
+        val pointTxs = pointTransactionRepository.findBySourceTransactionId(paymentTxId)
         pointTxs.size shouldBe 1
         pointTxs[0].type shouldBe PointTransactionType.EARN
         pointTxs[0].amount.compareTo(BigDecimal("200")) shouldBe 0
 
         // 3) 같은 txId에 POINT_EARN 2-leg (DEBIT POINT_BALANCE / CREDIT POINT_FUNDING)
-        val pointEntries = ledgerRepository.findByTransactionId(result.transactionId)
+        val pointEntries = ledgerRepository.findByTransactionId(paymentTxId)
             .filter { it.account == AccountCode.POINT_BALANCE || it.account == AccountCode.POINT_FUNDING }
         pointEntries.size shouldBe 2
         val debit = pointEntries.first { it.side == LedgerEntrySide.DEBIT }

@@ -59,17 +59,6 @@ class SecurityConfig(
                 it.requestMatchers(HttpMethod.POST, "/api/v1/products", "/api/v1/products/*/on-sale").authenticated()
                 // 장바구니·주문: 인증 필수 — 항상 JWT 주체의 카트/주문만 조작.
                 it.requestMatchers("/api/v1/cart", "/api/v1/cart/**", "/api/v1/orders", "/api/v1/orders/**").authenticated()
-                // 상품권 자금 이동 엔드포인트: 인증 필수 + 컨트롤러에서 JWT 주체로 소유권 검증.
-                it.requestMatchers(
-                    HttpMethod.POST,
-                    "/api/v1/vouchers/purchase", "/api/v1/vouchers/*/redeem",
-                    "/api/v1/vouchers/*/refund", "/api/v1/vouchers/*/withdraw",
-                ).authenticated()
-                // 상품권 조회: 인증 필수 + 컨트롤러에서 본인 자원으로 스코프(ADMIN은 전체 조회).
-                it.requestMatchers(
-                    HttpMethod.GET, "/api/v1/vouchers", "/api/v1/vouchers/*",
-                ).authenticated()
-
                 // 그 외(판매자 등록/조회, 회원 조회, 지자체 조회, 프로모션/포인트/쿠폰)는
                 // 공개이거나 컨트롤러 레벨 SecurityUtils가 본인 자원 인가를 강제한다.
                 it.anyRequest().permitAll()
