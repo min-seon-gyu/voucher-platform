@@ -6,8 +6,8 @@ import org.springframework.scheduling.annotation.EnableScheduling
 
 @SpringBootApplication
 @EnableScheduling
-class VoucherApplication
+class CommerceApplication
 
 fun main(args: Array<String>) {
-    runApplication<VoucherApplication>(*args)
+    runApplication<CommerceApplication>(*args)
 }
