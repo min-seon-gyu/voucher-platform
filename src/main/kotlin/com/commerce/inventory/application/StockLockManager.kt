@@ -22,6 +22,13 @@ class StockLockManager(
 
     fun <T> withStockLock(skuId: Long, action: () -> T): T = withLock("stock:$skuId", action)
 
+    /** 여러 SKU 락을 skuId 오름차순으로 중첩 획득(정준 순서 → 교차 데드락 방지). 주문처럼 다품목 차감에 사용. */
+    fun <T> withStockLocks(skuIds: Collection<Long>, action: () -> T): T {
+        val sorted = skuIds.distinct().sorted()
+        fun acquire(i: Int): T = if (i >= sorted.size) action() else withStockLock(sorted[i]) { acquire(i + 1) }
+        return acquire(0)
+    }
+
     private fun <T> withLock(key: String, action: () -> T): T {
         val lockType = key.substringBefore(':')
         var redisLock: org.redisson.api.RLock? = null

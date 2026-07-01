@@ -40,6 +40,11 @@ enum class ErrorCode(
     // Product / Inventory
     DUPLICATE_SKU_CODE(HttpStatus.CONFLICT, "이미 존재하는 SKU 코드입니다"),
     OUT_OF_STOCK(HttpStatus.BAD_REQUEST, "재고가 부족합니다"),
+    PRODUCT_NOT_ON_SALE(HttpStatus.BAD_REQUEST, "판매 중인 상품이 아닙니다"),
+
+    // Cart / Order
+    CART_EMPTY(HttpStatus.BAD_REQUEST, "장바구니가 비어 있습니다"),
+    ORDER_NOT_CANCELLABLE(HttpStatus.BAD_REQUEST, "취소할 수 없는 주문입니다"),
 
     // Ledger
     LEDGER_IMBALANCE_DETECTED(HttpStatus.INTERNAL_SERVER_ERROR, "원장 정합성 오류가 감지되었습니다"),
