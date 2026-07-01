@@ -30,3 +30,18 @@ class OrderCancelledEvent(
     override val eventType = "ORDER_CANCELLED"
     override val currentState get() = """{"status":"CANCELLED","totalAmount":$totalAmount,"memberId":$memberId}"""
 }
+
+/**
+ * 부분/전액 환불. [totalAmount]는 이번 환불로 고객에게 환급된 실결제액(net)이다.
+ * [fullyRefunded]가 true면 주문 전체가 환불됨(REFUNDED), false면 부분환불(PARTIALLY_REFUNDED).
+ */
+class OrderRefundedEvent(
+    override val aggregateId: Long, // orderId
+    override val memberId: Long,
+    override val totalAmount: BigDecimal, // 이번 환불 net
+    val fullyRefunded: Boolean,
+) : OrderEvent() {
+    override val eventType = "ORDER_REFUNDED"
+    override val currentState
+        get() = """{"status":"${if (fullyRefunded) "REFUNDED" else "PARTIALLY_REFUNDED"}","refundedAmount":$totalAmount,"memberId":$memberId}"""
+}
