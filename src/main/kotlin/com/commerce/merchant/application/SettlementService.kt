@@ -52,6 +52,34 @@ class SettlementService(
         return calculate(merchantId, start, end)
     }
 
+    /**
+     * 결산 배치용: 기준일이 속한 정산 구간의 **미저장** Settlement를 만든다(중복 또는 0원이면 null=스킵).
+     * calculate()와 달리 예외를 던지지 않아 청크 처리에서 head-of-line 없이 다음 가맹점으로 진행한다.
+     * 자체 read-only tx 안에서 가맹점을 로드하므로 region(LAZY) 접근이 안전하다(reader가 넘긴 detached 엔티티 미사용).
+     */
+    @Transactional(readOnly = true)
+    fun buildSettlementForBatch(merchantId: Long, referenceDate: LocalDate): Settlement? {
+        val merchant = merchantRepository.findById(merchantId).orElse(null) ?: return null
+        val (start, end) = resolvePeriod(merchant.region.policy.settlementPeriod, referenceDate)
+
+        // 재실행 안전: 같은 구간 정산이 이미 있으면 스킵(unique 제약과 이중 방어).
+        if (settlementRepository.findByMerchantIdAndPeriodStartAndPeriodEnd(merchantId, start, end) != null) return null
+
+        val totalAmount = transactionRepository.sumAmountByMerchantAndTypeAndPeriod(
+            merchantId, TransactionType.REDEMPTION, TransactionStatus.COMPLETED,
+            start.atStartOfDay(), end.atTime(LocalTime.MAX),
+        )
+        // 0원 정산은 만들지 않는다(노이즈 방지 + confirm 단계의 0원 고착 문제와 일관).
+        if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) return null
+
+        return Settlement(
+            merchantId = merchantId,
+            periodStart = start,
+            periodEnd = end,
+            totalAmount = totalAmount,
+        )
+    }
+
     private fun resolvePeriod(period: SettlementPeriod, ref: LocalDate): Pair<LocalDate, LocalDate> = when (period) {
         SettlementPeriod.DAILY -> ref to ref
         SettlementPeriod.WEEKLY -> ref.with(DayOfWeek.MONDAY) to ref.with(DayOfWeek.SUNDAY)

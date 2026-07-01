@@ -43,6 +43,9 @@ dependencies {
     // Kafka (감사 이벤트 Transactional Outbox 전달)
     implementation("org.springframework.kafka:spring-kafka")
 
+    // Spring Batch (결산 주기 일괄 정산 배치)
+    implementation("org.springframework.boot:spring-boot-starter-batch")
+
     // JWT
     implementation("io.jsonwebtoken:jjwt-api:0.12.5")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.5")
@@ -72,6 +75,7 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter:1.19.7")
     testImplementation("io.mockk:mockk:1.13.10")
     testImplementation("org.springframework.kafka:spring-kafka-test")
+    testImplementation("org.springframework.batch:spring-batch-test")
 }
 
 allOpen {
