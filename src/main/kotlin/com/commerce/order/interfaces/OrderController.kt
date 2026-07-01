@@ -12,6 +12,8 @@ import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.*
 import java.math.BigDecimal
 
+data class PlaceOrderRequest(val couponId: Long? = null)
+
 data class OrderLineResponse(
     val skuId: Long,
     val sellerId: Long,
@@ -58,8 +60,8 @@ class OrderController(
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @Idempotent // 체크아웃 중복 방지 — 같은 Idempotency-Key 재시도 시 원 응답(201) 반환
-    fun place(): ApiResponse<OrderResponse> {
-        val order = orderService.placeOrder(SecurityUtils.currentMemberId())
+    fun place(@RequestBody(required = false) request: PlaceOrderRequest?): ApiResponse<OrderResponse> {
+        val order = orderService.placeOrder(SecurityUtils.currentMemberId(), request?.couponId)
         val detail = orderService.getDetail(order.id)
         return ApiResponse.ok(OrderResponse.of(detail.order, detail.lines))
     }

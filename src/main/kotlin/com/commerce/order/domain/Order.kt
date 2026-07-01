@@ -34,6 +34,9 @@ class Order(
 
     @Column
     var paymentTransactionId: Long? = null,
+
+    @Column(name = "coupon_id")
+    val couponId: Long? = null,
 ) : BaseEntity() {
 
     fun cancel() {
