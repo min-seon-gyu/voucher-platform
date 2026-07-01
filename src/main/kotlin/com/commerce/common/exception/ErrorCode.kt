@@ -36,6 +36,9 @@ enum class ErrorCode(
     // Cart / Order
     CART_EMPTY(HttpStatus.BAD_REQUEST, "장바구니가 비어 있습니다"),
     ORDER_NOT_CANCELLABLE(HttpStatus.BAD_REQUEST, "취소할 수 없는 주문입니다"),
+    ORDER_NOT_REFUNDABLE(HttpStatus.BAD_REQUEST, "환불할 수 없는 주문입니다"),
+    ORDER_LINE_ALREADY_REFUNDED(HttpStatus.BAD_REQUEST, "이미 환불된 주문 라인입니다"),
+    INVALID_REFUND_LINES(HttpStatus.BAD_REQUEST, "환불 대상 라인이 유효하지 않습니다"),
 
     // Ledger
     LEDGER_IMBALANCE_DETECTED(HttpStatus.INTERNAL_SERVER_ERROR, "원장 정합성 오류가 감지되었습니다"),

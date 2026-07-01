@@ -121,4 +121,51 @@ class PointEarnService(
 
         meterRegistry.counter("point.cancel.count").increment()
     }
+
+    /**
+     * 부분 환불용: 지정 금액만큼만 적립을 역분개한다(전액 역분개하는 [reverseEarn]의 부분 버전).
+     * 여러 번의 부분환불이 누적되어 원 적립을 초과 역분개하지 않도록, 잔여 순적립(EARN 합 − CANCEL 합) 한도로 캡한다.
+     * 반드시 호출자의 활성 취소 트랜잭션 내부에서 동기로 실행한다.
+     *
+     * @param requestedAmount 이번 환불로 역적립하려는 포인트(라인별 배분 결과)
+     */
+    fun reverseEarnAmount(
+        memberId: Long,
+        sourceTransactionId: Long,
+        requestedAmount: BigDecimal,
+        compensatingTransactionId: Long,
+    ) {
+        if (requestedAmount.signum() <= 0) return
+        val netEarned = pointTransactionRepository.findBySourceTransactionId(sourceTransactionId)
+            .fold(BigDecimal.ZERO) { acc, tx ->
+                when (tx.type) {
+                    PointTransactionType.EARN -> acc + tx.amount
+                    PointTransactionType.CANCEL -> acc - tx.amount
+                }
+            }
+        val reverseAmount = requestedAmount.min(netEarned) // 잔여 순적립 한도 캡(초과 역분개 방지)
+        if (reverseAmount.signum() <= 0) return
+
+        val account = pointAccountRepository.findByMemberIdForUpdate(memberId)
+            ?: throw BusinessException(ErrorCode.POINT_ACCOUNT_NOT_FOUND)
+        account.deduct(reverseAmount)
+
+        pointTransactionRepository.save(
+            PointTransaction(
+                memberId = memberId,
+                type = PointTransactionType.CANCEL,
+                amount = reverseAmount,
+                balanceAfter = account.balance,
+                sourceTransactionId = sourceTransactionId,
+            )
+        )
+        ledgerService.record(
+            debitAccount = AccountCode.POINT_FUNDING,
+            creditAccount = AccountCode.POINT_BALANCE,
+            amount = reverseAmount,
+            transactionId = compensatingTransactionId,
+            entryType = LedgerEntryType.CANCELLATION,
+        )
+        meterRegistry.counter("point.cancel.count").increment()
+    }
 }

@@ -13,6 +13,7 @@ import com.commerce.order.domain.OrderLine
 import com.commerce.order.domain.OrderStatus
 import com.commerce.order.domain.event.OrderCancelledEvent
 import com.commerce.order.domain.event.OrderPlacedEvent
+import com.commerce.order.domain.event.OrderRefundedEvent
 import com.commerce.order.infrastructure.OrderJpaRepository
 import com.commerce.order.infrastructure.OrderLineJpaRepository
 import com.commerce.point.application.PointEarnService
@@ -30,6 +31,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.math.RoundingMode
 
 data class OrderDetail(val order: Order, val lines: List<OrderLine>)
 
@@ -101,8 +103,10 @@ class OrderService(
                     }
 
                     val tx = transactionService.create(type = TransactionType.ORDER_PAYMENT, amount = total, memberId = memberId)
-                    // 고객 현금(T−D) → 판매자 미지급금
-                    ledgerService.record(AccountCode.CUSTOMER_CASH, AccountCode.SELLER_PAYABLE, paid, tx.id, LedgerEntryType.ORDER_PAYMENT)
+                    // 고객 현금(T−D) → 판매자 미지급금. 100% 할인이면 paid=0이므로 현금 leg는 생략(원장 amount>0 불변식).
+                    if (paid > BigDecimal.ZERO) {
+                        ledgerService.record(AccountCode.CUSTOMER_CASH, AccountCode.SELLER_PAYABLE, paid, tx.id, LedgerEntryType.ORDER_PAYMENT)
+                    }
                     // 플랫폼 할인 출연(D) → 판매자 미지급금 (판매자는 gross 유지)
                     if (discount > BigDecimal.ZERO) {
                         ledgerService.record(AccountCode.PROMOTION_FUNDING, AccountCode.SELLER_PAYABLE, discount, tx.id, LedgerEntryType.COUPON_SUBSIDY)
@@ -169,17 +173,30 @@ class OrderService(
 
                 val comp = transactionService.create(
                     type = TransactionType.ORDER_CANCEL,
-                    amount = o.paidAmount,
+                    amount = o.totalAmount, // gross(>0) — paid는 100% 할인 시 0일 수 있어 거래 금액으로 부적합.
                     memberId = requesterMemberId,
                     originalTransactionId = o.paymentTransactionId,
                 )
-                ledgerService.record(
-                    debitAccount = AccountCode.SELLER_PAYABLE,
-                    creditAccount = AccountCode.CUSTOMER_CASH,
-                    amount = o.totalAmount,
-                    transactionId = comp.id,
-                    entryType = LedgerEntryType.ORDER_CANCEL,
-                )
+                // 결제 분개의 정확한 역분개: 고객에게 실결제액(paid)만 환급하고, 플랫폼 출연(discount)은 환입한다.
+                // (gross 전액을 CUSTOMER_CASH로 환급하면 할인분 D만큼 과환급 + 출연 미회수가 되므로 분리한다.)
+                if (o.paidAmount > BigDecimal.ZERO) {
+                    ledgerService.record(
+                        debitAccount = AccountCode.SELLER_PAYABLE,
+                        creditAccount = AccountCode.CUSTOMER_CASH,
+                        amount = o.paidAmount,
+                        transactionId = comp.id,
+                        entryType = LedgerEntryType.ORDER_CANCEL,
+                    )
+                }
+                if (o.discountAmount > BigDecimal.ZERO) {
+                    ledgerService.record(
+                        debitAccount = AccountCode.SELLER_PAYABLE,
+                        creditAccount = AccountCode.PROMOTION_FUNDING,
+                        amount = o.discountAmount,
+                        transactionId = comp.id,
+                        entryType = LedgerEntryType.ORDER_CANCEL,
+                    )
+                }
                 comp.complete()
                 o.paymentTransactionId?.let { pointEarnService.reverseEarn(requesterMemberId, it, comp.id) }
                 o.cancel()
@@ -187,6 +204,102 @@ class OrderService(
                 o
             }!!
         }
+    }
+
+    /**
+     * 부분 환불(라인 단위). 지정한 [lineIds]의 라인을 환불한다 — 재고 복원 + 원장 역분개 + 포인트 부분 역적립.
+     *
+     * 할인·포인트는 라인별 [allocate](최대잔여 배분)로 나눠 환불분을 산정한다. 배분은 전체 라인에 대해
+     * 결정적으로 계산되므로 여러 번의 부분환불이 누적돼도 합계가 원 할인 D·원 적립 P와 정확히 일치한다.
+     * 모든 라인이 환불되면 REFUNDED, 일부면 PARTIALLY_REFUNDED로 전이한다.
+     * (쿠폰/예산은 소진 상태를 유지한다 — 단일 사용 쿠폰이 환불로 되살아나지 않도록 하는 의도적 단순화.)
+     */
+    fun refundLines(requesterMemberId: Long, orderId: Long, lineIds: List<Long>): Order {
+        if (lineIds.isEmpty()) throw BusinessException(ErrorCode.INVALID_REFUND_LINES)
+        val order = orderRepository.findById(orderId)
+            .orElseThrow { BusinessException(ErrorCode.ENTITY_NOT_FOUND) }
+        if (order.memberId != requesterMemberId) throw BusinessException(ErrorCode.ACCESS_DENIED)
+        if (order.status != OrderStatus.PAID && order.status != OrderStatus.PARTIALLY_REFUNDED)
+            throw BusinessException(ErrorCode.ORDER_NOT_REFUNDABLE)
+
+        val allLines = orderLineRepository.findByOrderId(orderId)
+        val targetIds = lineIds.toSet()
+        val targets = allLines.filter { it.id in targetIds }
+        if (targets.size != targetIds.size) throw BusinessException(ErrorCode.INVALID_REFUND_LINES) // 이 주문에 없는 라인
+        if (targets.any { it.refunded }) throw BusinessException(ErrorCode.ORDER_LINE_ALREADY_REFUNDED)
+
+        // 라인별 할인·포인트 배분(전체 라인 기준, 인덱스 결정적) → 환불 대상 합산.
+        val lineAmounts = allLines.map { it.lineAmount }
+        val discountPerLine = allocate(lineAmounts, order.discountAmount, order.totalAmount, 2)
+        val netPerLine = allLines.indices.map { lineAmounts[it] - discountPerLine[it] }
+        val pointsPerLine = allocate(netPerLine, pointEarnService.calculateEarn(order.paidAmount), order.paidAmount, 0)
+        val idxById = allLines.withIndex().associate { (i, l) -> l.id to i }
+
+        val refundGross = targets.fold(BigDecimal.ZERO) { acc, l -> acc + l.lineAmount }
+        val refundDiscount = targets.fold(BigDecimal.ZERO) { acc, l -> acc + discountPerLine[idxById.getValue(l.id)] }
+        val refundNet = refundGross - refundDiscount
+        val refundPoints = targets.fold(BigDecimal.ZERO) { acc, l -> acc + pointsPerLine[idxById.getValue(l.id)] }
+
+        return stockLockManager.withStockLocks(targets.map { it.skuId }) {
+            transactionTemplate.execute { _ ->
+                val o = orderRepository.findById(orderId).orElseThrow { BusinessException(ErrorCode.ENTITY_NOT_FOUND) }
+                if (o.status != OrderStatus.PAID && o.status != OrderStatus.PARTIALLY_REFUNDED)
+                    throw BusinessException(ErrorCode.ORDER_NOT_REFUNDABLE)
+                val freshLines = orderLineRepository.findByOrderId(orderId)
+                val freshTargets = freshLines.filter { it.id in targetIds }
+                if (freshTargets.any { it.refunded }) throw BusinessException(ErrorCode.ORDER_LINE_ALREADY_REFUNDED) // 동시 환불 재확인
+
+                freshTargets.forEach {
+                    stockService.restoreWithinTx(it.skuId, it.quantity)
+                    it.markRefunded()
+                }
+
+                // 거래 금액은 gross(refundGross>0) — 배분 결과 net=0인 라인도 있으므로 net을 쓰면 amount=0으로 깨진다.
+                val comp = transactionService.create(
+                    type = TransactionType.ORDER_CANCEL,
+                    amount = refundGross,
+                    memberId = requesterMemberId,
+                    originalTransactionId = o.paymentTransactionId,
+                )
+                // 결제 역분개(환불 대상분만): 고객에 net 환급 + 플랫폼 출연분 환입. 0원 leg는 기록하지 않는다(원장 amount>0 불변식).
+                if (refundNet > BigDecimal.ZERO) {
+                    ledgerService.record(AccountCode.SELLER_PAYABLE, AccountCode.CUSTOMER_CASH, refundNet, comp.id, LedgerEntryType.ORDER_CANCEL)
+                }
+                if (refundDiscount > BigDecimal.ZERO) {
+                    ledgerService.record(AccountCode.SELLER_PAYABLE, AccountCode.PROMOTION_FUNDING, refundDiscount, comp.id, LedgerEntryType.ORDER_CANCEL)
+                }
+                comp.complete()
+                // 포인트는 환불 net에 비례해 부분 역적립(잔여 순적립 한도 캡).
+                if (refundPoints > BigDecimal.ZERO) {
+                    o.paymentTransactionId?.let { pointEarnService.reverseEarnAmount(requesterMemberId, it, refundPoints, comp.id) }
+                }
+
+                o.applyRefund(refundGross) // 누적 환불액 갱신 → REFUNDED/PARTIALLY_REFUNDED 결정(동시 환불은 @Version으로 직렬화)
+                eventPublisher.publishEvent(OrderRefundedEvent(o.id, requesterMemberId, refundNet, o.status == OrderStatus.REFUNDED))
+                o
+            }!!
+        }
+    }
+
+    /**
+     * 최대잔여(largest-remainder) 배분: [total]을 [weights] 비율로 나누되 합계가 [total]과 **정확히** 일치하도록
+     * scale 단위 잔여를 잔차가 큰 순으로 1단위씩 분배한다. base=0 또는 total=0이면 전부 0.
+     * (비례식 반올림의 페니 드리프트를 제거 — 부분환불이 반복돼도 배분 합이 원값과 어긋나지 않는다.)
+     */
+    private fun allocate(weights: List<BigDecimal>, total: BigDecimal, base: BigDecimal, scale: Int): List<BigDecimal> {
+        val zero = BigDecimal.ZERO.setScale(scale)
+        if (base.signum() == 0 || total.signum() == 0) return weights.map { zero }
+
+        val raw = weights.map { total.multiply(it).divide(base, scale + 4, RoundingMode.HALF_UP) }
+        val floors = raw.map { it.setScale(scale, RoundingMode.FLOOR) }.toMutableList()
+        val unit = BigDecimal.ONE.movePointLeft(scale) // scale 2 → 0.01, scale 0 → 1
+        val leftover = total - floors.fold(BigDecimal.ZERO) { acc, v -> acc + v }
+        val units = leftover.divide(unit, 0, RoundingMode.HALF_UP).toInt() // 분배할 잔여 단위 수(0 이상, 라인 수 미만)
+        val order = raw.indices.sortedWith(
+            compareByDescending<Int> { raw[it] - floors[it] }.thenBy { it }, // 잔차 큰 순, 동률은 인덱스 순(결정적)
+        )
+        repeat(units) { k -> floors[order[k % order.size]] += unit }
+        return floors
     }
 
     @Transactional(readOnly = true)

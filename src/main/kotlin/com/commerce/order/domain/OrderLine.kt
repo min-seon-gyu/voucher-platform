@@ -34,4 +34,13 @@ class OrderLine(
 
     @Column(nullable = false, precision = 38, scale = 2)
     val lineAmount: BigDecimal,
-) : BaseEntity()
+
+    /** 부분환불 여부. 환불된 라인은 정산 합산에서 제외되고 재환불이 거부된다. */
+    @Column(nullable = false)
+    var refunded: Boolean = false,
+) : BaseEntity() {
+
+    fun markRefunded() {
+        refunded = true
+    }
+}
