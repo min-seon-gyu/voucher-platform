@@ -30,20 +30,6 @@
 
 Aggregate 중심 **모듈러 모놀리스**. 각 모듈은 `domain / application / infrastructure / interfaces` 4계층(헥사고날)으로 분리되고, `order`가 재무·재고·배송을 오케스트레이션한다(역방향 의존 없음). 패키지 루트 `com.commerce`.
 
-```mermaid
-flowchart LR
-  cart --> order
-  product --> inventory
-  order --> inventory
-  order --> promotion
-  order --> ledger
-  order --> point
-  order --> shipping
-  claim --> order
-  claim --> shipping
-  seller -. 정산 배치 .-> ledger
-```
-
 ---
 
 ## 핵심 흐름
